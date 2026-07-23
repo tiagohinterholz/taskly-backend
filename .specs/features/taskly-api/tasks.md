@@ -368,12 +368,12 @@ T16 → T17
 - Skill: NONE
 
 **Done when**:
-- [ ] Criação só com título aceita; título vazio rejeitado
-- [ ] Edição de cada campo individualmente coberta
-- [ ] Todas as transições de status testadas, incluindo "para trás" (ex.: `done` → `not_started`)
-- [ ] Tag com 21+ caracteres rejeitada; tags válidas aceitas
-- [ ] Gate check passa: `uv run pytest tests/unit -q`
-- [ ] Test count: 10+ testes (1:1 com TASK-01..04, STAT-01, TAG-01/02)
+- [x] Criação só com título aceita; título vazio rejeitado
+- [x] Edição de cada campo individualmente coberta
+- [x] Todas as transições de status testadas, incluindo "para trás" (ex.: `done` → `not_started`)
+- [x] Tag com 21+ caracteres rejeitada; tags válidas aceitas
+- [x] Gate check passa: `uv run pytest tests/unit -q`
+- [x] Test count: 10+ testes (1:1 com TASK-01..04, STAT-01, TAG-01/02)
 
 **Tests**: unit
 **Gate**: quick
