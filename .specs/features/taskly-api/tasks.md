@@ -289,10 +289,10 @@ T16 → T17
 - Skill: NONE
 
 **Done when**:
-- [ ] `create`/`list_for_project`/`update`/`delete` testados contra Postgres real
-- [ ] Persistência correta de `tags` (array) e `status` (enum) coberta
-- [ ] Gate check passa: `uv run pytest tests/unit tests/integration -q`
-- [ ] Test count: 6+ testes de integração
+- [x] `create`/`list_for_project`/`update`/`delete` testados contra Postgres real
+- [x] Persistência correta de `tags` (array) e `status` (enum) coberta
+- [x] Gate check passa: `uv run pytest tests/unit tests/integration -q`
+- [x] Test count: 6+ testes de integração
 
 **Tests**: integration
 **Gate**: full
