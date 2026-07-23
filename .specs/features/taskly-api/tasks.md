@@ -342,11 +342,11 @@ T16 → T17
 - Skill: NONE
 
 **Done when**:
-- [ ] Criar, listar (só do usuário), renomear cobertos
-- [ ] Delete com tarefas associadas bloqueado (erro de domínio, mapeado a 409 no router)
-- [ ] Delete sem tarefas permitido
-- [ ] Gate check passa: `uv run pytest tests/unit -q`
-- [ ] Test count: 6+ testes (1:1 com PROJ-01..04)
+- [x] Criar, listar (só do usuário), renomear cobertos
+- [x] Delete com tarefas associadas bloqueado (erro de domínio, mapeado a 409 no router)
+- [x] Delete sem tarefas permitido
+- [x] Gate check passa: `uv run pytest tests/unit -q`
+- [x] Test count: 6+ testes (1:1 com PROJ-01..04)
 
 **Tests**: unit
 **Gate**: quick
