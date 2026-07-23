@@ -82,14 +82,22 @@
 - **Date**: 2026-07-23
 - **Status**: active
 
+### AD-011
+- **Decision**: Repositories fazem `flush()` mas nunca `commit()` — a fronteira da transação pertence sempre a quem chama (camada de service).
+- **Reason**: Permite que um service componha múltiplas operações de repository (ex.: deletar tarefa + seus anexos) numa única transação atômica, decidindo o commit/rollback no fim, em vez de cada repository commitar isoladamente.
+- **Trade-off**: Todo service precisa lembrar de commitar explicitamente ao final; repositories sozinhos não persistem nada.
+- **Scope**: Backend (services que ainda serão implementados: T6, T9, T12 devem seguir essa convenção).
+- **Date**: 2026-07-23
+- **Status**: active
+
 ## Handoff
 
 - **Feature**: `backend/.specs/features/taskly-api`
-- **Phase / Task**: Execute em andamento — Fase 1 concluída (T1, T2, T3), Fase 2 prestes a ser disparada (T4, T14 em paralelo)
-- **Completed**: spec.md, design.md, tasks.md (agora com 17 tarefas em 7 fases, incl. T17 Dockerfile multi-stage); T1 (`48b9f28`), T2 (`619952b`), T3 (`8ff4b88`) implementadas, gate build ok, `uv run pip-audit` limpo
-- **In-progress**: nenhuma task em execução no momento; prestes a disparar Fase 2
-- **Next step**: Disparar sub-agente da Fase 2 (T4 `PasswordHasher`+`JWTService`, T14 `StorageBackend`, ambas com testes unitários e gate quick)
+- **Phase / Task**: Execute em andamento — Fases 1, 2 e 3 concluídas (T1, T2, T3, T4, T14, T5, T8, T11), Fase 4 prestes a ser disparada (T6, T9, T12 em paralelo — services)
+- **Completed**: spec.md, design.md, tasks.md; T1 (`48b9f28`), T2 (`619952b`), T3 (`8ff4b88`), docs (`7e4d50b`), T4 (`ae3dc50`), T14 (`996d2ae`), T5 (`d8d8228`), T8 (`bafb7bc`), T11 (`61fe594`) — 36 testes passando (13 unit + 23 integration)
+- **In-progress**: nenhuma task em execução no momento; prestes a disparar Fase 4
+- **Next step**: Disparar sub-agente da Fase 4 (`AuthService` T6, `ProjectService` T9, `TaskService` T12 — todos unit test, repository mockado, podem rodar em paralelo dentro do mesmo worker)
 - **Blockers**: none
-- **Uncommitted files**: nenhum (código commitado por task pelo worker; `.specs/` commitado separadamente como docs)
+- **Uncommitted files**: `.specs/STATE.md` (esta atualização, a ser commitada agora)
 - **Branch**: master
-- **Nota de ambiente**: Postgres de dev local mapeado em `localhost:5433` (não 5432) via `docker-compose.yml`, porque a máquina já tem um Postgres nativo rodando na porta padrão; `.env.example` reflete isso. Container `backend-postgres-1` deixado rodando entre fases para continuidade.
+- **Notas de ambiente**: Postgres de dev local em `localhost:5433`, container `backend-postgres-1` healthy, mantido entre fases. `bcrypt==4.0.1` fixado por incompatibilidade com o backend bcrypt do `passlib`. `pytest-asyncio==1.4.0` adicionado (já previsto em design.md) com `asyncio_mode`/`asyncio_default_fixture_loop_scope`/`asyncio_default_test_loop_scope = "session"` em `pyproject.toml`, e `tests/conftest.py` carrega `.env` antes de `app.core.db` ser importado. Fixture `db_session` em `tests/integration/conftest.py` (truncate-all-tables após cada teste) — reutilizar em T7/T10/T13/T15.
