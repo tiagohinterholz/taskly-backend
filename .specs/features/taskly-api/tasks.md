@@ -239,10 +239,10 @@ T16 → T17
 - Skill: NONE
 
 **Done when**:
-- [ ] `UserRepository.create`/`get_by_email` testados contra Postgres real, incl. violação de constraint única
-- [ ] `RefreshTokenRepository.create`/`get_by_hash`/`revoke` testados, incl. token expirado e já revogado
-- [ ] Gate check passa: `uv run pytest tests/unit tests/integration -q`
-- [ ] Test count: 6+ testes de integração
+- [x] `UserRepository.create`/`get_by_email` testados contra Postgres real, incl. violação de constraint única
+- [x] `RefreshTokenRepository.create`/`get_by_hash`/`revoke` testados, incl. token expirado e já revogado
+- [x] Gate check passa: `uv run pytest tests/unit tests/integration -q`
+- [x] Test count: 6+ testes de integração
 
 **Tests**: integration
 **Gate**: full
