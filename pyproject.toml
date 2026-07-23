@@ -6,7 +6,10 @@ requires-python = ">=3.12"
 dependencies = [
     "alembic==1.18.5",
     "asyncpg==0.31.0",
+    "bcrypt==4.0.1",
     "fastapi==0.139.2",
+    "passlib[bcrypt]==1.7.4",
+    "pyjwt==2.13.0",
     "sqlalchemy[asyncio]==2.0.51",
     "uvicorn[standard]==0.51.0",
 ]
@@ -14,4 +17,8 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pip-audit==2.10.1",
+    "pytest==9.1.1",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

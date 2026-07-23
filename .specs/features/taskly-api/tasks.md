@@ -187,11 +187,11 @@ T16 → T17
 - Skill: NONE
 
 **Done when**:
-- [ ] `PasswordHasher.hash`/`verify` fazem roundtrip correto e rejeitam senha errada
-- [ ] `JWTService.encode`/`decode` retornam o `user_id` correto
-- [ ] `decode` levanta exceção clara para token expirado e para token malformado
-- [ ] Gate check passa: `uv run pytest tests/unit -q`
-- [ ] Test count: 4+ testes (hash ok, hash errado, decode expirado, decode malformado)
+- [x] `PasswordHasher.hash`/`verify` fazem roundtrip correto e rejeitam senha errada
+- [x] `JWTService.encode`/`decode` retornam o `user_id` correto
+- [x] `decode` levanta exceção clara para token expirado e para token malformado
+- [x] Gate check passa: `uv run pytest tests/unit -q`
+- [x] Test count: 4+ testes (hash ok, hash errado, decode expirado, decode malformado)
 
 **Tests**: unit
 **Gate**: quick
