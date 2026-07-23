@@ -264,10 +264,10 @@ T16 → T17
 - Skill: NONE
 
 **Done when**:
-- [ ] `create`/`list_for_user`/`rename`/`delete`/`count_tasks` testados contra Postgres real
-- [ ] Isolamento por `user_id` coberto (usuário B não aparece na listagem de A)
-- [ ] Gate check passa: `uv run pytest tests/unit tests/integration -q`
-- [ ] Test count: 6+ testes de integração
+- [x] `create`/`list_for_user`/`rename`/`delete`/`count_tasks` testados contra Postgres real
+- [x] Isolamento por `user_id` coberto (usuário B não aparece na listagem de A)
+- [x] Gate check passa: `uv run pytest tests/unit tests/integration -q`
+- [x] Test count: 6+ testes de integração
 
 **Tests**: integration
 **Gate**: full
