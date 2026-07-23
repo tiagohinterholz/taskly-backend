@@ -213,11 +213,11 @@ T16 → T17
 - Skill: NONE
 
 **Done when**:
-- [ ] `LocalStorageBackend.save`/`delete` testados com `tmp_path` (arquivo real gravado/removido)
-- [ ] `S3StorageBackend.save`/`delete` testados com `boto3` mockado (`moto` ou `unittest.mock`), incl. caso de falha do cliente S3
-- [ ] Seleção por `STORAGE_BACKEND` (`local`/`s3`) testada
-- [ ] Gate check passa: `uv run pytest tests/unit -q`
-- [ ] Test count: 6+ testes (save/delete × 2 implementações + falha + seleção)
+- [x] `LocalStorageBackend.save`/`delete` testados com `tmp_path` (arquivo real gravado/removido)
+- [x] `S3StorageBackend.save`/`delete` testados com `boto3` mockado (`moto` ou `unittest.mock`), incl. caso de falha do cliente S3
+- [x] Seleção por `STORAGE_BACKEND` (`local`/`s3`) testada
+- [x] Gate check passa: `uv run pytest tests/unit -q`
+- [x] Test count: 6+ testes (save/delete × 2 implementações + falha + seleção)
 
 **Tests**: unit
 **Gate**: quick

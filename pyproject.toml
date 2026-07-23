@@ -7,6 +7,7 @@ dependencies = [
     "alembic==1.18.5",
     "asyncpg==0.31.0",
     "bcrypt==4.0.1",
+    "boto3==1.43.55",
     "fastapi==0.139.2",
     "passlib[bcrypt]==1.7.4",
     "pyjwt==2.13.0",
