@@ -314,13 +314,13 @@ T16 → T17
 - Skill: NONE
 
 **Done when**:
-- [ ] `register` rejeita e-mail duplicado (repository mockado retornando conflito)
-- [ ] `authenticate` rejeita credenciais inválidas sem revelar se o e-mail existe
-- [ ] `refresh` rejeita token revogado/expirado e rotaciona corretamente em caso de sucesso
-- [ ] `logout` revoga o refresh token
-- [ ] Rate limit bloqueia após 5 tentativas falhas na mesma janela
-- [ ] Gate check passa: `uv run pytest tests/unit -q`
-- [ ] Test count: 8+ testes (1:1 com AUTH-01..05 + edge cases)
+- [x] `register` rejeita e-mail duplicado (repository mockado retornando conflito)
+- [x] `authenticate` rejeita credenciais inválidas sem revelar se o e-mail existe
+- [x] `refresh` rejeita token revogado/expirado e rotaciona corretamente em caso de sucesso
+- [x] `logout` revoga o refresh token
+- [x] Rate limit bloqueia após 5 tentativas falhas na mesma janela
+- [x] Gate check passa: `uv run pytest tests/unit -q`
+- [x] Test count: 8+ testes (1:1 com AUTH-01..05 + edge cases)
 
 **Tests**: unit
 **Gate**: quick
