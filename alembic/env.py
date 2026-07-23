@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 
+import app.models  # noqa: F401  (registers all models on Base.metadata)
 from app.core.db import Base, get_database_url
 
 # this is the Alembic Config object, which provides
