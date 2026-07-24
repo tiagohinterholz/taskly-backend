@@ -395,14 +395,14 @@ T16 → T17
 - Skill: NONE
 
 **Done when**:
-- [ ] `ProjectRepository.get_for_user(project_id, user_id) -> Project | None` added and unit/integration tested (returns `None` for another user's project)
-- [ ] `ProjectService.rename`/`delete` call `get_for_user` first and raise a new `ProjectNotFoundError` when `None` (before renaming/deleting) — router (T10) maps this to 404
-- [ ] `TaskRepository.get_for_project(task_id, project_id) -> Task | None` added and tested (returns `None` when the task belongs to a different project)
-- [ ] `TaskService.update`/`delete` gain a required `project_id` parameter, call `get_for_project` first, and raise a new `TaskNotFoundError` when `None`/mismatched — router (T13) maps this to 404 (combined with the router's own project-ownership check via `ProjectService.get_for_user`, since task ownership is transitive through project ownership)
-- [ ] Existing T9/T12 tests updated only where the signature change requires it (call sites), without weakening any existing assertion
-- [ ] New tests added: rename/delete blocked for non-owner (service-level, mocked repo returning `None`), task update/delete blocked when task's project doesn't match
-- [ ] Gate check passes: `uv run pytest tests/unit tests/integration -q`
-- [ ] Test count: existing counts unchanged or increased, never decreased
+- [x] `ProjectRepository.get_for_user(project_id, user_id) -> Project | None` added and unit/integration tested (returns `None` for another user's project)
+- [x] `ProjectService.rename`/`delete` call `get_for_user` first and raise a new `ProjectNotFoundError` when `None` (before renaming/deleting) — router (T10) maps this to 404
+- [x] `TaskRepository.get_for_project(task_id, project_id) -> Task | None` added and tested (returns `None` when the task belongs to a different project)
+- [x] `TaskService.update`/`delete` gain a required `project_id` parameter, call `get_for_project` first, and raise a new `TaskNotFoundError` when `None`/mismatched — router (T13) maps this to 404 (combined with the router's own project-ownership check via `ProjectService.get_for_user`, since task ownership is transitive through project ownership)
+- [x] Existing T9/T12 tests updated only where the signature change requires it (call sites), without weakening any existing assertion
+- [x] New tests added: rename/delete blocked for non-owner (service-level, mocked repo returning `None`), task update/delete blocked when task's project doesn't match
+- [x] Gate check passes: `uv run pytest tests/unit tests/integration -q`
+- [x] Test count: existing counts unchanged or increased, never decreased
 
 **Tests**: unit (services) + integration (new repository methods)
 **Gate**: full

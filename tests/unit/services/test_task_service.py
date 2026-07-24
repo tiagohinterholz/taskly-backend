@@ -8,7 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.task import Task, TaskStatus
 from app.repositories.task_repository import TaskRepository
-from app.services.task_service import TagTooLongError, TaskService, TaskTitleRequiredError
+from app.services.task_service import (
+    TagTooLongError,
+    TaskNotFoundError,
+    TaskService,
+    TaskTitleRequiredError,
+)
 
 
 def _make_service() -> tuple[TaskService, AsyncMock, AsyncMock]:
@@ -122,68 +127,81 @@ class TestListForProject:
 class TestUpdate:
     async def test_update_title_field(self) -> None:
         service, task_repository, session = _make_service()
+        project_id = uuid.uuid4()
         task_id = uuid.uuid4()
-        updated_task = _make_task(title="Updated title")
+        updated_task = _make_task(project_id=project_id, title="Updated title")
+        task_repository.get_for_project.return_value = _make_task(project_id=project_id)
         task_repository.update.return_value = updated_task
 
-        result = await service.update(task_id, title="Updated title")
+        result = await service.update(project_id, task_id, title="Updated title")
 
         assert result.title == "Updated title"
+        task_repository.get_for_project.assert_awaited_once_with(task_id, project_id)
         task_repository.update.assert_awaited_once_with(task_id, title="Updated title")
         session.commit.assert_awaited_once()
 
     async def test_update_short_description_field(self) -> None:
         service, task_repository, _ = _make_service()
+        project_id = uuid.uuid4()
         task_id = uuid.uuid4()
-        updated_task = _make_task(short_description="Short desc")
+        updated_task = _make_task(project_id=project_id, short_description="Short desc")
+        task_repository.get_for_project.return_value = _make_task(project_id=project_id)
         task_repository.update.return_value = updated_task
 
-        result = await service.update(task_id, short_description="Short desc")
+        result = await service.update(project_id, task_id, short_description="Short desc")
 
         assert result.short_description == "Short desc"
         task_repository.update.assert_awaited_once_with(task_id, short_description="Short desc")
 
     async def test_update_full_description_field(self) -> None:
         service, task_repository, _ = _make_service()
+        project_id = uuid.uuid4()
         task_id = uuid.uuid4()
-        updated_task = _make_task(full_description="Full desc")
+        updated_task = _make_task(project_id=project_id, full_description="Full desc")
+        task_repository.get_for_project.return_value = _make_task(project_id=project_id)
         task_repository.update.return_value = updated_task
 
-        result = await service.update(task_id, full_description="Full desc")
+        result = await service.update(project_id, task_id, full_description="Full desc")
 
         assert result.full_description == "Full desc"
         task_repository.update.assert_awaited_once_with(task_id, full_description="Full desc")
 
     async def test_update_due_at_field(self) -> None:
         service, task_repository, _ = _make_service()
+        project_id = uuid.uuid4()
         task_id = uuid.uuid4()
         due_at = datetime(2026, 8, 1, tzinfo=timezone.utc)
-        updated_task = _make_task(due_at=due_at)
+        updated_task = _make_task(project_id=project_id, due_at=due_at)
+        task_repository.get_for_project.return_value = _make_task(project_id=project_id)
         task_repository.update.return_value = updated_task
 
-        result = await service.update(task_id, due_at=due_at)
+        result = await service.update(project_id, task_id, due_at=due_at)
 
         assert result.due_at == due_at
         task_repository.update.assert_awaited_once_with(task_id, due_at=due_at)
 
     async def test_update_tags_field_with_valid_tags(self) -> None:
         service, task_repository, _ = _make_service()
+        project_id = uuid.uuid4()
         task_id = uuid.uuid4()
-        updated_task = _make_task(tags=["frontend"])
+        updated_task = _make_task(project_id=project_id, tags=["frontend"])
+        task_repository.get_for_project.return_value = _make_task(project_id=project_id)
         task_repository.update.return_value = updated_task
 
-        result = await service.update(task_id, tags=["frontend"])
+        result = await service.update(project_id, task_id, tags=["frontend"])
 
         assert result.tags == ["frontend"]
         task_repository.update.assert_awaited_once_with(task_id, tags=["frontend"])
 
     async def test_update_tags_field_with_tag_over_20_chars_rejected(self) -> None:
         service, task_repository, session = _make_service()
+        project_id = uuid.uuid4()
         task_id = uuid.uuid4()
         too_long_tag = "b" * 25
+        task_repository.get_for_project.return_value = _make_task(project_id=project_id)
 
         with pytest.raises(TagTooLongError) as exc_info:
-            await service.update(task_id, tags=[too_long_tag])
+            await service.update(project_id, task_id, tags=[too_long_tag])
 
         assert exc_info.value.tag == too_long_tag
         task_repository.update.assert_not_awaited()
@@ -191,12 +209,26 @@ class TestUpdate:
 
     async def test_update_with_empty_title_rejected(self) -> None:
         service, task_repository, _ = _make_service()
+        project_id = uuid.uuid4()
         task_id = uuid.uuid4()
+        task_repository.get_for_project.return_value = _make_task(project_id=project_id)
 
         with pytest.raises(TaskTitleRequiredError):
-            await service.update(task_id, title="")
+            await service.update(project_id, task_id, title="")
 
         task_repository.update.assert_not_awaited()
+
+    async def test_update_raises_not_found_when_task_not_in_project(self) -> None:
+        service, task_repository, session = _make_service()
+        project_id = uuid.uuid4()
+        task_id = uuid.uuid4()
+        task_repository.get_for_project.return_value = None
+
+        with pytest.raises(TaskNotFoundError):
+            await service.update(project_id, task_id, title="New title")
+
+        task_repository.update.assert_not_awaited()
+        session.commit.assert_not_awaited()
 
     @pytest.mark.parametrize(
         ("from_status", "to_status"),
@@ -207,14 +239,16 @@ class TestUpdate:
         self, from_status: TaskStatus, to_status: TaskStatus
     ) -> None:
         service, task_repository, session = _make_service()
+        project_id = uuid.uuid4()
         task_id = uuid.uuid4()
         # `from_status` documents the task's status before this update — the
         # service is stateless w.r.t. current status (STAT-01: no order
         # restriction), so only the target `to_status` drives the call.
-        updated_task = _make_task(status=to_status)
+        updated_task = _make_task(project_id=project_id, status=to_status)
+        task_repository.get_for_project.return_value = _make_task(project_id=project_id)
         task_repository.update.return_value = updated_task
 
-        result = await service.update(task_id, status=to_status)
+        result = await service.update(project_id, task_id, status=to_status)
 
         assert result.status == to_status
         task_repository.update.assert_awaited_once_with(task_id, status=to_status)
@@ -224,9 +258,24 @@ class TestUpdate:
 class TestDelete:
     async def test_delete_removes_task_via_repository_and_commits(self) -> None:
         service, task_repository, session = _make_service()
+        project_id = uuid.uuid4()
         task_id = uuid.uuid4()
+        task_repository.get_for_project.return_value = _make_task(project_id=project_id)
 
-        await service.delete(task_id)
+        await service.delete(project_id, task_id)
 
+        task_repository.get_for_project.assert_awaited_once_with(task_id, project_id)
         task_repository.delete.assert_awaited_once_with(task_id)
         session.commit.assert_awaited_once()
+
+    async def test_delete_raises_not_found_when_task_not_in_project(self) -> None:
+        service, task_repository, session = _make_service()
+        project_id = uuid.uuid4()
+        task_id = uuid.uuid4()
+        task_repository.get_for_project.return_value = None
+
+        with pytest.raises(TaskNotFoundError):
+            await service.delete(project_id, task_id)
+
+        task_repository.delete.assert_not_awaited()
+        session.commit.assert_not_awaited()

@@ -78,6 +78,38 @@ class TestTaskRepositoryListForProject:
         assert [t.id for t in tasks] == [task_a.id]
 
 
+class TestTaskRepositoryGetForProject:
+    async def test_get_for_project_returns_task_for_owning_project(
+        self, db_session: AsyncSession
+    ) -> None:
+        project = await _make_project(db_session)
+        repo = TaskRepository(db_session)
+        task = await repo.create(project_id=project.id, title="Mine")
+
+        found = await repo.get_for_project(task.id, project.id)
+
+        assert found is not None
+        assert found.id == task.id
+        assert found.project_id == project.id
+
+    async def test_get_for_project_returns_none_for_task_in_different_project(
+        self, db_session: AsyncSession
+    ) -> None:
+        project_a = await _make_project(db_session)
+        other_user = await UserRepository(db_session).create(
+            email="other-gfp@example.com", password_hash="hash"
+        )
+        project_b = await ProjectRepository(db_session).create(
+            user_id=other_user.id, name="Other project"
+        )
+        repo = TaskRepository(db_session)
+        task_in_b = await repo.create(project_id=project_b.id, title="B task")
+
+        found = await repo.get_for_project(task_in_b.id, project_a.id)
+
+        assert found is None
+
+
 class TestTaskRepositoryUpdate:
     async def test_update_persists_partial_field_change(self, db_session: AsyncSession) -> None:
         project = await _make_project(db_session)

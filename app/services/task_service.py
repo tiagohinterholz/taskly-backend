@@ -26,6 +26,14 @@ class TagTooLongError(Exception):
         super().__init__(f"tag exceeds {_MAX_TAG_LENGTH} characters: {tag!r}")
 
 
+class TaskNotFoundError(Exception):
+    """Raised by update()/delete() when task_id doesn't exist or doesn't
+    belong to the given project — the ownership check happens here so a
+    router can map it to a 404 without ever revealing the resource exists
+    (ISO-02).
+    """
+
+
 class TaskService:
     """Task business rules: creation (title required, tags validated),
     free-form partial updates (any field, incl. unrestricted status
@@ -64,7 +72,10 @@ class TaskService:
     async def list_for_project(self, project_id: uuid.UUID) -> list[Task]:
         return await self._task_repository.list_for_project(project_id)
 
-    async def update(self, task_id: uuid.UUID, **fields: Any) -> Task:
+    async def update(self, project_id: uuid.UUID, task_id: uuid.UUID, **fields: Any) -> Task:
+        owned = await self._task_repository.get_for_project(task_id, project_id)
+        if owned is None:
+            raise TaskNotFoundError(task_id)
         if "title" in fields:
             self._validate_title(fields["title"])
         if "tags" in fields:
@@ -73,7 +84,10 @@ class TaskService:
         await self._session.commit()
         return task
 
-    async def delete(self, task_id: uuid.UUID) -> None:
+    async def delete(self, project_id: uuid.UUID, task_id: uuid.UUID) -> None:
+        owned = await self._task_repository.get_for_project(task_id, project_id)
+        if owned is None:
+            raise TaskNotFoundError(task_id)
         await self._task_repository.delete(task_id)
         await self._session.commit()
 

@@ -23,6 +23,12 @@ class ProjectRepository:
         result = await self._session.execute(select(Project).where(Project.user_id == user_id))
         return list(result.scalars().all())
 
+    async def get_for_user(self, project_id: uuid.UUID, user_id: uuid.UUID) -> Project | None:
+        result = await self._session.execute(
+            select(Project).where(Project.id == project_id, Project.user_id == user_id)
+        )
+        return result.scalar_one_or_none()
+
     async def rename(self, project_id: uuid.UUID, name: str) -> Project:
         await self._session.execute(
             update(Project).where(Project.id == project_id).values(name=name)

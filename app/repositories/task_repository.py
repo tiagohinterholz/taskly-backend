@@ -41,6 +41,12 @@ class TaskRepository:
         result = await self._session.execute(select(Task).where(Task.project_id == project_id))
         return list(result.scalars().all())
 
+    async def get_for_project(self, task_id: uuid.UUID, project_id: uuid.UUID) -> Task | None:
+        result = await self._session.execute(
+            select(Task).where(Task.id == task_id, Task.project_id == project_id)
+        )
+        return result.scalar_one_or_none()
+
     async def update(self, task_id: uuid.UUID, **fields: Any) -> Task:
         result = await self._session.execute(select(Task).where(Task.id == task_id))
         task = result.scalar_one()

@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.project import Project
 from app.repositories.project_repository import ProjectRepository
-from app.services.project_service import ProjectHasTasksError, ProjectService
+from app.services.project_service import ProjectHasTasksError, ProjectNotFoundError, ProjectService
 
 
 def _make_service() -> tuple[ProjectService, AsyncMock, AsyncMock]:
@@ -68,15 +68,30 @@ class TestRename:
         service, project_repository, session = _make_service()
         user_id = uuid.uuid4()
         project_id = uuid.uuid4()
+        owned_project = _make_project(user_id, "Old Name")
         renamed_project = _make_project(user_id, "New Name")
+        project_repository.get_for_user.return_value = owned_project
         project_repository.rename.return_value = renamed_project
 
         result = await service.rename(user_id, project_id, "New Name")
 
         assert result is renamed_project
         assert result.name == "New Name"
+        project_repository.get_for_user.assert_awaited_once_with(project_id, user_id)
         project_repository.rename.assert_awaited_once_with(project_id, "New Name")
         session.commit.assert_awaited_once()
+
+    async def test_rename_raises_not_found_when_project_not_owned_by_user(self) -> None:
+        service, project_repository, session = _make_service()
+        user_id = uuid.uuid4()
+        project_id = uuid.uuid4()
+        project_repository.get_for_user.return_value = None
+
+        with pytest.raises(ProjectNotFoundError):
+            await service.rename(user_id, project_id, "New Name")
+
+        project_repository.rename.assert_not_awaited()
+        session.commit.assert_not_awaited()
 
 
 class TestDelete:
@@ -84,6 +99,7 @@ class TestDelete:
         service, project_repository, session = _make_service()
         user_id = uuid.uuid4()
         project_id = uuid.uuid4()
+        project_repository.get_for_user.return_value = _make_project(user_id)
         project_repository.count_tasks.return_value = 3
 
         with pytest.raises(ProjectHasTasksError):
@@ -96,6 +112,7 @@ class TestDelete:
         service, project_repository, session = _make_service()
         user_id = uuid.uuid4()
         project_id = uuid.uuid4()
+        project_repository.get_for_user.return_value = _make_project(user_id)
         project_repository.count_tasks.return_value = 0
 
         await service.delete(user_id, project_id)
@@ -106,9 +123,35 @@ class TestDelete:
     async def test_delete_checks_task_count_before_deleting(self) -> None:
         service, project_repository, _ = _make_service()
         project_id = uuid.uuid4()
+        project_repository.get_for_user.return_value = _make_project(uuid.uuid4())
         project_repository.count_tasks.return_value = 0
 
         await service.delete(uuid.uuid4(), project_id)
 
         method_names = [call[0] for call in project_repository.mock_calls]
         assert method_names.index("count_tasks") < method_names.index("delete")
+
+    async def test_delete_raises_not_found_when_project_not_owned_by_user(self) -> None:
+        service, project_repository, session = _make_service()
+        user_id = uuid.uuid4()
+        project_id = uuid.uuid4()
+        project_repository.get_for_user.return_value = None
+
+        with pytest.raises(ProjectNotFoundError):
+            await service.delete(user_id, project_id)
+
+        project_repository.count_tasks.assert_not_awaited()
+        project_repository.delete.assert_not_awaited()
+        session.commit.assert_not_awaited()
+
+    async def test_delete_checks_ownership_before_task_count(self) -> None:
+        service, project_repository, _ = _make_service()
+        user_id = uuid.uuid4()
+        project_id = uuid.uuid4()
+        project_repository.get_for_user.return_value = _make_project(user_id)
+        project_repository.count_tasks.return_value = 0
+
+        await service.delete(user_id, project_id)
+
+        method_names = [call[0] for call in project_repository.mock_calls]
+        assert method_names.index("get_for_user") < method_names.index("count_tasks")

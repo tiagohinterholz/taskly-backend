@@ -37,6 +37,31 @@ class TestProjectRepositoryListForUser:
         assert all(p.user_id == user_a.id for p in projects_for_a)
 
 
+class TestProjectRepositoryGetForUser:
+    async def test_get_for_user_returns_project_for_owner(self, db_session: AsyncSession) -> None:
+        user = await _make_user(db_session)
+        repo = ProjectRepository(db_session)
+        project = await repo.create(user_id=user.id, name="Mine")
+
+        found = await repo.get_for_user(project.id, user.id)
+
+        assert found is not None
+        assert found.id == project.id
+        assert found.user_id == user.id
+
+    async def test_get_for_user_returns_none_for_another_users_project(
+        self, db_session: AsyncSession
+    ) -> None:
+        owner = await _make_user(db_session, email="owner-gfu@example.com")
+        other = await _make_user(db_session, email="other-gfu@example.com")
+        repo = ProjectRepository(db_session)
+        project = await repo.create(user_id=owner.id, name="Owner's project")
+
+        found = await repo.get_for_user(project.id, other.id)
+
+        assert found is None
+
+
 class TestProjectRepositoryRename:
     async def test_rename_updates_name(self, db_session: AsyncSession) -> None:
         user = await _make_user(db_session)
