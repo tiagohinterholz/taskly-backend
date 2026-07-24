@@ -101,11 +101,11 @@
 ## Handoff
 
 - **Feature**: `backend/.specs/features/taskly-api`
-- **Phase / Task**: Execute em andamento — Fases 1-5 concluídas (todos os routers); Fase 6 (T16, wiring final) prestes a ser disparada
-- **Completed**: spec.md, design.md, tasks.md (18 tasks); commits até `c89b501` (T15) — 150 testes passando
-- **In-progress**: nenhuma task em execução; prestes a disparar Fase 6
-- **Next step**: Disparar agente para T16 (montar todos os routers em `app/main.py`, CORS restrito à origem do frontend com credentials, cookies Secure+SameSite=Lax em produção, rate limiter global) — depois Fase 7 (T17 Dockerfile)
+- **Phase / Task**: Execute em andamento — Fases 1-6 concluídas (todos os routers + wiring final); Fase 7 (T17, Dockerfile) é o próximo passo
+- **Completed**: spec.md, design.md, tasks.md (18 tasks); commits até `b814e04` (T16) — 156 testes passando
+- **In-progress**: nenhuma task em execução
+- **Next step**: Disparar agente para T17 (Dockerfile multi-stage, usuário não-root `appuser`, `.dockerignore`)
 - **Blockers**: none
 - **Uncommitted files**: nenhum
 - **Branch**: master
-- **Notas de ambiente**: Postgres de dev local em `localhost:5433`, container `backend-postgres-1` healthy. `bcrypt==4.0.1` fixado. `httpx` + `python-multipart` adicionados como deps (T7/T15). N+1 de anexos resolvido via `AttachmentRepository.list_for_tasks` (batch, com teste de regressão de contagem de query) — reutilizar esse padrão se novas listagens agregadas surgirem. `AuthService` reconstruído por request compartilha o rate-limit dict via um dict no nível do módulo do router — se T16 mudar a forma como `AuthService` é instanciado (ex.: DI via `Depends`), preservar esse compartilhamento pra não quebrar AUTH-05 (429).
+- **Notas de ambiente**: Postgres de dev local em `localhost:5433`, container `backend-postgres-1` healthy. `bcrypt==4.0.1` fixado. `httpx` + `python-multipart` adicionados como deps (T7/T15); `python-multipart` bumped `0.0.20 → 0.0.31` em T16 (6 CVEs conhecidos corrigidos — `pip-audit` estava sujo antes do bump, exigido pelo próprio Done-when de T16). N+1 de anexos resolvido via `AttachmentRepository.list_for_tasks` (batch, com teste de regressão de contagem de query) — reutilizar esse padrão se novas listagens agregadas surgirem. `AuthService` continua reconstruído por request no router (`_get_auth_service`), sem refactor de DI em T16; o rate-limit dict compartilhado via módulo (`_shared_failed_attempts`) foi preservado intacto e o teste de 429 (AUTH-05) segue verde. `app/main.py` agora monta os 4 routers + `CORSMiddleware` (origem via env `CORS_ORIGIN`, default `http://localhost:5173`, `allow_credentials=True`); nenhum `app/core/config.py` foi criado — env vars continuam lidas inline (`os.environ`/`os.environ.get`) como já era o padrão em `auth.py`/`dependencies.py`/`db.py`.
