@@ -60,6 +60,16 @@ class TestCreateTask:
 
         assert response.status_code == 422
 
+    async def test_create_task_due_at_invalid_format_returns_422(self, client: AsyncClient) -> None:
+        await register_and_login(client, _unique_email("task-create-bad-due-at"))
+        project_id = await _create_project(client)
+
+        response = await client.post(
+            f"/projects/{project_id}/tasks", json={"title": "T", "due_at": "not-a-date"}
+        )
+
+        assert response.status_code == 422
+
     async def test_create_task_in_other_users_project_returns_404(self, client: AsyncClient) -> None:
         await register_and_login(client, _unique_email("task-create-a"))
         project_id = await _create_project(client, "A's project")
@@ -177,6 +187,16 @@ class TestUpdateTask:
         task_id = created.json()["id"]
 
         response = await client.patch(f"/tasks/{task_id}", json={"title": ""})
+
+        assert response.status_code == 422
+
+    async def test_update_due_at_invalid_format_returns_422(self, client: AsyncClient) -> None:
+        await register_and_login(client, _unique_email("task-upd-bad-due-at"))
+        project_id = await _create_project(client)
+        created = await client.post(f"/projects/{project_id}/tasks", json={"title": "T"})
+        task_id = created.json()["id"]
+
+        response = await client.patch(f"/tasks/{task_id}", json={"due_at": "not-a-date"})
 
         assert response.status_code == 422
 
