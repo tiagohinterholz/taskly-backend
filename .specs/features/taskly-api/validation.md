@@ -2,142 +2,128 @@
 
 **Date**: 2026-07-24
 **Spec**: `.specs/features/taskly-api/spec.md`
-**Diff range**: `48b9f28..HEAD` (full feature history) — this round's actual surface: `954d17b..HEAD` (`f7b3219`, `57a7d28`, `35b7c12`, `9e79aaa`, `a913821`), i.e. the 6 post-review follow-up changes requested after prior round-2 PASS.
-**Verifier**: independent sub-agent (author ≠ verifier) — fresh re-verification, no prior report content taken on faith.
+**Diff range**: `48b9f28..HEAD` (full feature history) — this round's actual surface: `8a75c02..db77a8b` (T19, commit `db77a8b`, "fix(attachments): add authenticated download URL to satisfy ATT-01"), preceded by `0d0e709` (task definition) and followed by `e1938ca` (handoff doc update, no code).
+**Verifier**: independent sub-agent (author ≠ verifier) — fresh re-verification focused specifically on T19; no prior report content taken on faith.
 
-**Ground rule applied**: every claim below was re-derived from fresh reads of the actual diff and current source, fresh `file:line` citations, a full gate run, and my own scratch-state mutation testing. All mutations were injected directly in the real working tree, run, then reverted via `git checkout --` (one file removed via `rm` for a temp test file that was never committed). `git status --short` was confirmed clean after every individual mutation and at the end of the session — including a stray untracked `data/attachments/` directory produced as a side effect of running the suite with the default `LOCAL_STORAGE_PATH`, which was removed to restore a clean tree.
+**Ground rule applied**: every claim below was re-derived from fresh reads of the actual diff and current source, fresh `file:line` citations, a full gate run, and my own scratch-state mutation testing. All mutations were injected directly in the real working tree (`app/api/routers/attachments.py`), run, then reverted via `git checkout --`. `git status --short` was confirmed clean after every individual mutation and at the end of the session.
 
 ---
 
-## Task Completion (6 post-review follow-ups)
+## Task Completion (T19)
 
-| # | Change | Status | Notes |
+| Task | Status | Notes |
+| --- | --- | --- |
+| T19 — `StorageBackend.get_url`/`.read()` (protocol + `LocalStorageBackend` + `S3StorageBackend`) | ✅ Done | `app/storage/backend.py:24-35`, `app/storage/local.py:28-36`, `app/storage/s3.py:31-45` |
+| T19 — `AttachmentRepository.get_for_task` (ownership-scoped lookup) | ✅ Done | `app/repositories/attachment_repository.py:33-42` |
+| T19 — `GET .../attachments/{attachment_id}/download` route | ✅ Done | `app/api/routers/attachments.py:100-128` |
+| T19 — `AttachmentOut.url` always points at the download endpoint | ✅ Done | `app/api/routers/tasks.py:50-57` (field), `:74-88` (`_to_attachment_out` builder) |
+
+---
+
+## 1. Spec-Anchored Check for ATT-01
+
+### (a) `url` field present in every response that embeds an attachment
+
+| Response | Code path | `file:line` |
+| --- | --- | --- |
+| Upload (`POST .../attachments`) | `_to_attachment_out(attachment, project_id)` called directly | `app/api/routers/attachments.py:59` |
+| Task list (`GET /projects/{id}/tasks`) | `_to_task_out` → `_to_attachment_out` per attachment | `app/api/routers/tasks.py:91-104`, called at `:181` |
+| Task detail-equivalent (`PATCH /projects/{project_id}/tasks/{id}`, the only route returning a single task with its attachments post-creation) | same `_to_task_out` call | `app/api/routers/tasks.py:210` |
+
+All three call sites route through the same `_to_attachment_out` builder (`tasks.py:74-88`) — there is exactly one place `url` is constructed, so there is no risk of the three responses diverging. **Minor observation (not a gap)**: only the upload response and the list response have a dedicated test asserting the `url` value (see below); the PATCH/update response doesn't have its own `url` assertion, but it shares the identical, already-tested code path, so this is not flagged as a coverage gap.
+
+### (b) Test that actually follows the URL and gets real content back
+
+| Scenario | Test | `file:line` — assertion | Result |
 | --- | --- | --- | --- |
-| 1 | `f7b3219` — auto-migration via `entrypoint.sh` | ✅ Done | `entrypoint.sh` has `set -e`, runs `alembic upgrade head`, then `exec "$@"`. A failed migration aborts the container before uvicorn ever starts (verified by reading script logic; `set -e` + no `\|\|` fallback + `exec` handoff only after the migration line — correct shell semantics, no swallowed exit code). |
-| 2 | `57a7d28`+ — README, `COOKIE_SECURE` in `.env.example` | ✅ Done | `.env.example:28-32` documents `COOKIE_SECURE=false` default; matches `app/api/routers/auth.py:34` (`_COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").lower() == "true"`), unchanged production code, already tested in round 2. |
-| 3 | `35b7c12` — `BaseRepository[Model]` extraction | ✅ Done | Genuinely generic (parameterized via `Generic[ModelType]` + a `model` class attribute per subclass — not hardcoded). All 5 repositories (`Project`, `Task`, `Attachment`, `User`, `RefreshToken`) inherit `__init__`/`get_by_id`/`delete` unchanged; none silently redefines them with different behavior (spot-checked all 5 files). |
-| 4 | `9e79aaa` — route renesting under `/projects/{project_id}/tasks/{task_id}[/attachments/...]` | ✅ Done, IDOR protection confirmed intact (see Section 1 below) | Highest-risk change of this round — verified with 3 real mutations against the actual code, not just reading. |
-| 5 | `a913821` — spec.md/tasks.md route docs updated | ✅ Done | `spec.md` ACs (TASK-01/02/03, STAT-01, ATT-01/04) now cite `/projects/{project_id}/tasks/{id}[/attachments/...]` consistently; no stale flat-route mentions remain in the spec body. |
+| Upload response contains the download URL, not `storage_key` | `test_upload_success_returns_attachment_reference` | `tests/integration/api/test_attachments_router.py:81-83` — `assert body["url"] == f"/projects/{project_id}/tasks/{task_id}/attachments/{body['id']}/download"` | ✅ PASS |
+| Task-list response embeds the same URL per attachment | `test_upload_attachment_appears_in_task_listing` (name inferred from class; verified at cited lines) | `test_attachments_router.py:105-107` — `assert task["attachments"][0]["url"] == (...)` | ✅ PASS |
+| **Local backend**: following the URL returns the real file bytes | `test_download_with_local_backend_streams_file_content` | `test_attachments_router.py:221-239` — uploads `b"hello world"`, `download_url = upload.json()["url"]`, `GET download_url`, `assert response.status_code == 200`, `assert response.content == b"hello world"`, `assert response.headers["content-type"].startswith("text/plain")` | ✅ PASS — genuinely dereferences the URL end-to-end, not a mock |
+| **S3 backend (mocked client)**: following the URL 307-redirects to a presigned URL | `test_download_with_s3_backend_redirects_to_presigned_url` | `test_attachments_router.py:241-260` — swaps in `_FakeS3StorageBackend` returning a fixed presigned URL, `GET download_url`, `assert response.status_code == 307`, `assert response.headers["location"] == presigned_url` | ✅ PASS |
+
+**Status**: ATT-01's "retornar a URL/referência do anexo" is now genuinely satisfied — `url` is present in all three response shapes and is proven dereferenceable by an end-to-end test for both storage backends (real bytes for local, real redirect target for S3). This closes the exact gap AD-016 describes (previously only `storage_key`, an internal identifier, was returned).
 
 ---
 
-## 1. IDOR / Ownership Regression Check (highest priority)
+## 2. Ownership/IDOR Check on the New Download Route (highest priority)
 
 ### Code path re-derived (not trusted from commit message)
 
-`app/api/routers/tasks.py:103-114` — `_get_owned_project_id(project_id, user_id, session)`:
+`app/api/routers/attachments.py:100-128`:
 ```python
-project = await ProjectRepository(session).get_for_user(project_id, user_id)
-if project is None:
-    raise HTTPException(status_code=404, detail="project not found")
-return project.id
+@router.get("/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}/download")
+async def download_attachment(...) -> Response:
+    await _get_owned_project_id(project_id, user.id, session)                 # level 1: project -> user
+    task = await TaskRepository(session).get_for_project(task_id, project_id)  # level 2: task -> project
+    if task is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    attachment = await AttachmentRepository(session).get_for_task(attachment_id, task_id)  # level 3: attachment -> task
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="attachment not found")
+
+    direct_url = storage_backend.get_url(attachment.storage_key)
+    if direct_url is not None:
+        return RedirectResponse(direct_url, status_code=307)
+    content = storage_backend.read(attachment.storage_key)
+    return Response(content=content, media_type=attachment.content_type)
 ```
-Called as the **first line** of every nested handler body — `create_task:127`, `list_tasks:155`, `update_task:177`, `delete_task:205`, and (imported into `attachments.py`) `upload_attachment:49`, `delete_attachment:84` — **before** any task/attachment-level work. `ProjectRepository.get_for_user` (`app/repositories/project_repository.py:25-29`) filters by **both** `Project.id == project_id` **and** `Project.user_id == user_id` in one WHERE clause — genuinely ownership-scoped, not a two-step lookup-then-compare that could be reordered incorrectly.
+All three ownership checks execute sequentially, each raising 404 immediately on failure, **before** `storage_backend.get_url`/`.read()` is ever called — no content or redirect can be produced without passing all three. `_get_owned_project_id` (`app/api/routers/tasks.py:119-129`) and `TaskRepository.get_for_project` both filter by a compound WHERE clause (id + parent id), matching the AD-012 pattern used by every other nested route. `AttachmentRepository.get_for_task` (new in T19, `attachment_repository.py:33-42`) is the same shape.
 
-Second layer: `TaskService.update`/`delete` (`app/services/task_service.py:94-119`) and `AttachmentService._verify_task_in_project` (`app/services/attachment_service.py:105-112`) both call `TaskRepository.get_for_project(task_id, project_id)` (`app/repositories/task_repository.py:51-55`), which filters by **both** `Task.id == task_id` **and** `Task.project_id == project_id`. A task that exists but belongs to a different project — even a project owned by the same user — resolves to `None` → `TaskNotFoundError` → 404.
+### Real test coverage for each level
 
-**Conclusion**: the two checks are independent and composed correctly — project-URL ownership (layer 1) and task-to-project membership (layer 2). Neither can be individually bypassed without failing loudly. This is a genuine simplification (one ownership check per request instead of the old flat-route's "look up task unscoped, then resolve+check its project" chain) that does not weaken protection — it removes a step, not a check.
+| Level | Scenario | Test | `file:line` | Result |
+| --- | --- | --- | --- | --- |
+| (a) project doesn't belong to user | User B requests A's full, valid `project_id/task_id/attachment_id` chain | `test_download_for_other_users_attachment_returns_404` | `test_attachments_router.py:277-295` | ✅ PASS — 404 |
+| (b) task doesn't belong to that project | Caller's own `project_id`, but a `task_id` that exists under a *different* project | **No test exists for the download route** (see Finding below) | — | ❌ **GAP — confirmed by mutation, see M2** |
+| (c) attachment doesn't belong to that task | Valid `project_id`+`task_id` pair (different project, same user), but `attachment_id` belongs to a different task | `test_download_for_attachment_of_a_different_task_returns_404` | `test_attachments_router.py:297-316` | ✅ PASS — 404 |
+| attachment doesn't exist at all | Random `attachment_id` under an otherwise valid, owned project/task | `test_download_nonexistent_attachment_returns_404` | `test_attachments_router.py:262-275` | ✅ PASS — 404 |
+| No session at all | Unauthenticated `GET` on the download route | `TestProtectedRoutesRequireSession::test_returns_401_without_session_cookie`, parametrized entry added for the download route | `test_auth_boundary.py:39-43` (route entry), `:53-58` (test, `assert response.status_code == 401`) | ✅ PASS — 401, included in the systematic `_PROTECTED_ROUTES` list alongside every other protected route |
 
-### Real test coverage — the "right-looking IDs" scenario
+**Finding (confirmed real, not theoretical — see mutation M2 below)**: there is no router/e2e-level test for the download route that isolates the "task belongs to a different project" case (caller's own, valid `project_id` combined with a `task_id` that exists but belongs to a different project). The existing `test_download_for_attachment_of_a_different_task_returns_404` looks similar but does **not** exercise this: in that test, `other_project_id`/`other_task_id` are a *valid, matching* pair (the task genuinely belongs to that project) — only the attachment-to-task check (level c) is what causes the 404. Level (b) is never isolated. This is the **exact same gap class as `L-007`** (already recorded as a candidate lesson from the prior verification round, where it was flagged as Minor against the `PATCH`/`DELETE` task routes and shipped anyway) — now recurring on a brand-new authenticated route.
 
-| Scenario | Test | Result |
-| --- | --- | --- |
-| B knows A's `project_id` and A's `task_id` (the classic full IDOR shape) | `tests/integration/api/test_tasks_router.py:227-237` (`test_update_other_users_task_returns_404`), `:291-301` (`test_delete_other_users_task_returns_404`); `test_attachments_router.py:102-113` (`test_upload_for_other_users_task_returns_404`) | ✅ 404 — caught at layer 1 (`_get_owned_project_id`), since `project_id` doesn't belong to B |
-| Attacker owns `project_id` in the URL, but `task_id` belongs to a **different** project (same user, two own projects) | **No test existed in the permanent suite** — I added one (`tests/integration/api/test_verifier_scratch_idor.py`, scratch, not committed) | ✅ 404 (current code) — confirmed by my own scratch test, then deleted |
-| Attacker owns `project_id`, `task_id` belongs to a victim's **different** project (cross-user + own-project-in-URL) | **No router/e2e test existed** — same scratch file | ✅ 404 (current code) — confirmed by my own scratch test, then deleted |
-| The identical repository-layer scenario (task in project B, looked up via project A) | `tests/integration/repositories/test_task_repository.py:97-111` (`test_get_for_project_returns_none_for_task_in_different_project`) — **pre-existing, unit-level** | ✅ PASS — `assert found is None` |
-
-**Finding (Minor, not a security weakness)**: the "own project in URL + foreign-project task_id" combination is proven correct at the repository-unit layer and by my own scratch e2e test, and the router's generic `TaskNotFoundError → 404` mapping is independently proven by `test_update_nonexistent_task_returns_404` / `test_delete_nonexistent_task_returns_404`. By composition the full path is safe and is defended by the permanent suite (see mutation M1 below — it **was** caught, just at the repository layer, not at the router layer). But there is no single router-level (e2e/HTTP) test that exercises this exact combined scenario end-to-end for the new nested routes. Flagged as a Minor gap with a fix task (below) — not a blocking finding.
-
-### My own mutations (scratch state, all reverted, `git status` clean after each)
+### My own mutations (scratch state, all reverted, `git status --short` clean after each)
 
 | # | File:line | Mutation | Run against | Result |
 | - | --------- | -------- | ------------ | ------ |
-| M1 | `app/repositories/task_repository.py:51-55` (`get_for_project`) | Removed the `Task.project_id == project_id` filter — task-to-project mismatch check silently disabled | Full suite (`uv run pytest -q`) | ✅ Killed — 1 failure: `tests/integration/repositories/test_task_repository.py::TestTaskRepositoryGetForProject::test_get_for_project_returns_none_for_task_in_different_project`. **Note**: running only the router-level files (`test_tasks_router.py` + `test_attachments_router.py`, 36 tests) showed 0 failures for this mutation — the router/e2e layer alone does not discriminate this case; only the repository-unit test does. This is the evidence behind the Minor gap above. |
-| M2 | `app/api/routers/tasks.py:205` (`delete_task`) | Removed the `await _get_owned_project_id(project_id, user.id, session)` call entirely — project-ownership check bypassed | `test_tasks_router.py` + `test_auth_boundary.py` | ✅ Killed — `test_delete_other_users_task_returns_404` failed (204 instead of 404) |
-| M3 | `app/repositories/project_repository.py:25-29` (`get_for_user`) | Removed the `Project.user_id == user_id` filter — project ownership check silently disabled at its root | Full suite | ✅ Killed decisively — 8 failures across both layers: `test_projects_router.py` (rename, delete), `test_tasks_router.py` (create, list, update, delete — all 4 nested task routes), and `test_project_repository.py` (unit-level). Confirms the ownership check is load-bearing everywhere it's used, including every new nested route. |
+| M1 | `app/api/routers/attachments.py:115` | Removed the `await _get_owned_project_id(...)` call entirely — project-ownership check (level a) bypassed | `test_attachments_router.py` + `test_auth_boundary.py` (24 tests) | ✅ **Killed** — `test_download_for_other_users_attachment_returns_404` failed (200 instead of 404) |
+| M2 | `app/api/routers/attachments.py:116-118` | Removed the `task = await TaskRepository(session).get_for_project(...)` lookup and its 404 branch entirely — task-to-project check (level b) bypassed | `test_attachments_router.py` + `test_auth_boundary.py` (24 tests) | ❌ **SURVIVED — 24 passed, 0 failed.** The permanent test suite does not detect a level-(b) bypass on this route. |
+| M3 | `app/api/routers/attachments.py:119` | Changed `AttachmentRepository(session).get_for_task(attachment_id, task_id)` to `AttachmentRepository(session).get_by_id(attachment_id)` — attachment-to-task check (level c) bypassed | `test_attachments_router.py` + `test_auth_boundary.py` (24 tests) | ✅ **Killed** — `test_download_for_attachment_of_a_different_task_returns_404` failed (200 instead of 404) |
 
-**Sensor depth**: 3 targeted mutations covering both ownership layers (project-URL ownership, task-to-project membership) plus the root repository method each depends on — proportional to this being the highest-risk change in the round, per the P0/critical-path tiering guidance.
-**Result**: 3/3 killed — ✅ PASS. **No weakening of IDOR protection found.**
+**Sensor depth**: 3 targeted mutations, one per ownership level on the download route's own new code — proportional to this being a brand-new authenticated route in the feature's most historically fragile area (T18/AD-012/AD-013).
+**Result**: 2/3 killed, **1 survived** — ❌ **FAIL**.
+
+**Severity assessment**: the *deployed* code is correct — I read it directly and it performs all three checks in order, before any content is returned (confirmed above). This is not a live exploit today. But per the task's explicit rule ("Any ownership/IDOR weakness on the new route is an automatic FAIL") and the project's own discrimination-sensor discipline ("surviving mutants are fix tasks — do not mark the feature done"), a surviving mutant on exactly this axis — task-to-project ownership, on a brand-new route, in the area with the most direct history of a real IDOR bug (T18) — is treated as a blocking finding, not a cosmetic one. A future refactor that accidentally dropped the task-ownership check on this route (the same class of mistake T18 fixed elsewhere) would ship undetected.
 
 ---
 
-## 2. BaseRepository Correctness Check
+## 3. Storage Abstraction Correctness
 
-`app/repositories/base.py:13-35`:
-```python
-class BaseRepository(Generic[ModelType]):
-    model: type[ModelType]
-    def __init__(self, session): self._session = session
-    async def get_by_id(self, id): ...  # select(self.model).where(self.model.id == id)
-    async def delete(self, id): ...     # delete(self.model).where(self.model.id == id); flush()
-```
-Genuinely generic — `self.model` is read from the subclass's class attribute, not hardcoded to any one entity.
-
-| Repository | Inherits `get_by_id`/`delete` unchanged? | `model` set correctly? |
+| Check | `file:line` | Evidence |
 | --- | --- | --- |
-| `ProjectRepository` | ✅ (no override) | `Project` |
-| `TaskRepository` | ✅ (no override; docstring notes `get_by_id` is intentionally unscoped and currently has no caller) | `Task` |
-| `AttachmentRepository` | ✅ | `Attachment` |
-| `UserRepository` | ✅ | `User` |
-| `RefreshTokenRepository` | ✅ (docstring explicitly notes it doesn't call `get_by_id`/`delete`, but they're still present via inheritance) | `RefreshToken` |
+| `LocalStorageBackend.get_url` always returns `None` | `app/storage/local.py:28-30` | `tests/unit/storage/test_local.py::test_get_url_always_returns_none` — real backend instance, asserts `is None` |
+| `LocalStorageBackend.read` returns real bytes matching what was saved (round-trip, real file I/O) | `app/storage/local.py:32-36` | `tests/unit/storage/test_local.py::test_read_returns_the_bytes_written_by_save` — calls `backend.save(...)` then `backend.read(...)` against a real `tmp_path` filesystem, `assert content == b"hello world"` — no mocks |
+| `LocalStorageBackend.read` raises `StorageError` on failure | `local.py:34-36` | `test_local.py::test_read_raises_storage_error_for_missing_key` — `pytest.raises(StorageError)` for a nonexistent key |
+| `S3StorageBackend.get_url` returns a presigned URL (mocked client) | `app/storage/s3.py:31-39` | `tests/unit/storage/test_s3.py::test_get_url_returns_the_presigned_url_from_the_client` — asserts `mock_client.generate_presigned_url` called with `{"Bucket": ..., "Key": ...}` + `ExpiresIn=3600`, and the returned value matches |
+| `S3StorageBackend.get_url` raises `StorageError` on failure | `s3.py:38-39` | `test_s3.py::test_get_url_raises_storage_error_when_s3_client_fails` |
+| `S3StorageBackend.read` fetches via `get_object` (mocked) | `s3.py:41-45` | `test_s3.py::test_read_returns_the_object_body_bytes` — asserts `get_object` called with `Bucket`/`Key`, returned bytes match `Body.read()` |
+| `S3StorageBackend.read` raises `StorageError` on failure | `s3.py:44-45` | `test_s3.py::test_read_raises_storage_error_when_s3_client_fails` |
+| Error-handling pattern consistent with existing `save`/`delete` | `s3.py:16-29` vs `:31-45` | Same `try/except (BotoCoreError, ClientError): raise StorageError(...)` shape reused verbatim for `get_url`/`read` — no new error-handling pattern introduced |
+| Download route branches correctly: `get_url() -> str` → 307; `get_url() -> None` → proxy via `read()` | `app/api/routers/attachments.py:123-128` | `test_download_with_local_backend_streams_file_content` (local → 200 + body) and `test_download_with_s3_backend_redirects_to_presigned_url` (S3 → 307 + `Location`) both pass against the real branching code |
+| `content_type` on the proxied response comes from the DB row, not guessed/hardcoded | `attachments.py:128` — `media_type=attachment.content_type` | `test_download_with_local_backend_streams_file_content:239` — `assert response.headers["content-type"].startswith("text/plain")`, matching the `content_type` the file was uploaded with |
 
-**Real test run (not just reading code)**: `tests/integration/repositories/test_base_repository.py` exercises `get_by_id`/`delete` via `ProjectRepository` as the vehicle, including a discriminating test (`test_get_by_id_is_unscoped_across_different_repositories_own_rows`) that looks up a `User`'s id via `ProjectRepository.get_by_id` and asserts `None` — proves the base method queries `self.model`, not a fixed table. `tests/integration/repositories/test_task_repository.py` adds an equivalent pair of tests using `TaskRepository`. Ran the full suite: **all pass** (182/182), confirming both `ProjectRepository().get_by_id(...)` and (transitively via `UserRepository(...).create(...)`) `UserRepository` work correctly through the inherited path.
-
-**Public signature check**: grepped every `self._xxx_repository.method(...)` call across `app/services/*.py` (14 call sites) and cross-checked each against its current repository class — no signature mismatches. All `delete(id)`/`get_by_id(id)` calls use positional args, compatible with the inherited base signature.
-
----
-
-## 3. Auto-Migration Check
-
-`entrypoint.sh`:
-```sh
-#!/bin/sh
-set -e
-echo "Running database migrations (alembic upgrade head)..."
-/app/.venv/bin/alembic upgrade head
-echo "Migrations complete. Starting application..."
-exec "$@"
-```
-`Dockerfile:57-58`: `ENTRYPOINT ["/app/entrypoint.sh"]` / `CMD ["/app/.venv/bin/uvicorn", ...]` — standard entrypoint+CMD composition, `$@` inside the script receives the CMD array as args.
-
-- `set -e` means any nonzero exit from `alembic upgrade head` aborts the script before reaching `exec "$@"` — uvicorn never starts against a stale schema. No `||`, no swallowed exit code, no fallback path.
-- `exec "$@"` replaces the shell process with uvicorn (correct PID-1 handling for signal forwarding in a container).
-
-Read-only review sufficient — no doubt found, so a full `docker build`/`docker run` re-verification was not performed (per the task's own guidance that this is not required unless something looks off).
-
----
-
-## 4. Spec-Anchored Re-Check of Touched ACs (new route paths only)
-
-| Criterion (WHEN X THEN Y) | Spec-defined outcome | `file:line` + assertion | Result |
-| --- | --- | --- | --- |
-| ISO-02: usuário tenta acessar/editar/deletar projeto/tarefa de outro | 404 | `test_tasks_router.py:73-81,100-108,227-237,291-301`; `test_attachments_router.py:102-113` — all assert `response.status_code == 404` against `/projects/{project_id}/tasks[...]` nested paths | ✅ PASS |
-| ISO-01: sem sessão em qualquer endpoint de projeto/tarefa | 401 | `test_auth_boundary.py:16-39` — 10 `_PROTECTED_ROUTES` entries, all using the current nested paths (`/projects/{id}/tasks/{id}`, `.../attachments`, `.../attachments/{id}`); `:48-53` asserts exactly `== 401` | ✅ PASS — route-count cross-check: 14 route decorators total (4 auth unprotected + 10 protected) matches 10 parametrized entries 1:1 |
-| TASK-01: título único campo obrigatório, `POST /projects/{id}/tasks` | 201, status inicial `not_started` | `test_tasks_router.py:38-53` | ✅ PASS |
-| TASK-02: `PATCH /projects/{project_id}/tasks/{id}` atualiza qualquer campo | 200, campo persistido | `test_tasks_router.py:112-171` (title, short/full description, due_at, tags — one test per field) | ✅ PASS |
-| TASK-03: `GET /projects/{id}/tasks` retorna tarefas do projeto | todas as tarefas do usuário, todos os campos | `test_tasks_router.py:85-98` | ✅ PASS |
-| TASK-04: deletar tarefa remove tarefa e anexos | task row + storage files gone | `test_tasks_router.py:303-330` (`test_delete_task_removes_its_attachment_files_from_storage`) — real filesystem check via `tmp_path`, plus `:271-281` | ✅ PASS |
-| STAT-01: transição livre entre os 4 estados via `PATCH /projects/{project_id}/tasks/{id}` | aceita qualquer transição, incl. "para trás" | `test_tasks_router.py:239-267` — parametrized over all 4 `TaskStatus` values + explicit `done → not_started` | ✅ PASS |
-| TAG-01: salvar tags | tags persistidas | `test_tasks_router.py:162-171` | ✅ PASS |
-| TAG-02: tag >20 chars → 422 nomeando a tag | corpo da resposta cita a tag | `test_tasks_router.py:173-185` — `assert too_long_tag in response.json()["detail"]` | ✅ PASS |
-| ATT-01: upload via `POST /projects/{project_id}/tasks/{id}/attachments` | 201, referência do anexo | `test_attachments_router.py:38-59` | ✅ PASS |
-| ATT-02: arquivo >10MB | 413, não salva | `test_attachments_router.py:81-100` — asserts 413 **and** `list(tmp_path.rglob("*")) == []` (nothing written) | ✅ PASS |
-| ATT-03: `DELETE /projects/{project_id}/tasks/{id}/attachments/{attachment_id}` | apaga do storage e da listagem | `test_attachments_router.py:136-157` | ✅ PASS |
-
-**Status**: 12/12 re-derived ACs matched spec-defined outcomes against the new route shapes. No stale-URL evidence remains — every citation above targets the current nested paths, freshly read from the current test files (not carried forward from the round-2 report, which cited the old flat `/tasks/{id}` shape for TASK-02/TASK-04 update/delete and ATT-01/03).
+**Status**: ✅ All storage-abstraction checks pass with genuine evidence (real file I/O for local, mocked-but-asserted-on-call-shape for S3, consistent error handling).
 
 ---
 
 ## Payload/Conjunction Rule
 
-- `test_delete_task_removes_its_attachment_files_from_storage` — real filesystem existence checks before/after, not a mock call.
-- `test_delete_task_returns_502_and_keeps_task_when_storage_fails` — status code **and** re-fetch to confirm task untouched.
-- `test_update_tag_over_20_chars_returns_422` — asserts the literal offending tag string in `detail`.
-- `test_upload_file_over_10mb_returns_413_without_saving` — status code **and** `tmp_path.rglob("*")` empty.
-- `test_returns_401_without_session_cookie` — exact `== 401`, no looser check, one parametrized case per route.
+- `test_upload_success_returns_attachment_reference` — asserts the exact `url` string value (not just presence), plus filename/content_type/size_bytes/storage_key.
+- `test_download_with_local_backend_streams_file_content` — asserts status **and** exact body bytes **and** content-type prefix — three-way conjunction, not just "200 OK."
+- `test_download_with_s3_backend_redirects_to_presigned_url` — asserts status **and** exact `Location` header value (not just "is a redirect").
+- `test_get_url_returns_the_presigned_url_from_the_client` — asserts the mock was called with the exact `Params`/`ExpiresIn` payload, not just that it was called.
+- `test_read_returns_the_object_body_bytes` — asserts the exact `Bucket`/`Key` payload passed to `get_object`.
 
-No conjunction-rule shortfalls found in the diff surface for this round.
+No conjunction-rule shortfalls found in T19's diff surface.
 
 ---
 
@@ -145,47 +131,64 @@ No conjunction-rule shortfalls found in the diff surface for this round.
 
 | Principle | Status |
 | --- | --- |
-| Minimum code | ✅ — route nesting diff is mechanical (path + one param added per handler); `BaseRepository` extraction removes duplication without adding unrelated abstraction |
-| Surgical changes | ✅ — no unrelated files touched beyond the stated scope |
+| Minimum code | ✅ — `get_url`/`read` added only where the protocol requires them; no speculative extra methods |
+| Surgical changes | ✅ — touched files are exactly the ones the diff stat shows; no unrelated refactors |
 | No scope creep | ✅ |
-| Matches patterns | ✅ — `AttachmentService._verify_task_in_project` mirrors `TaskService.update/delete`'s existing `get_for_project` pattern exactly (AD-012 convention preserved, not reinvented) |
-| Spec-anchored outcome check | ✅ 12/12 re-derived ACs for the new route shapes |
-| Per-layer coverage | ⚠️ Minor — the specific "own project_id + foreign-project task_id" combination is covered at the repository-unit layer, not at the router/e2e layer (see Section 1 finding) |
-| No unclaimed tests | ✅ |
-| Documented guidelines followed | AD-011 (repositories flush-only, services commit) — re-confirmed unchanged; AD-012 (service-layer ownership checks) — re-confirmed intact through the refactor; AD-013 (route nesting rationale) — matches implementation exactly, not overstated |
+| Matches patterns | ✅ — `get_for_task` mirrors `TaskRepository.get_for_project`'s exact shape (compound WHERE, `scalar_one_or_none`); download route reuses `_get_owned_project_id` rather than reimplementing it |
+| Spec-anchored outcome check | ✅ ATT-01 now precisely matched (Section 1) |
+| Per-layer coverage | ❌ Router/e2e layer missing the level-(b) case on the new route (Section 2) — same recurring gap class as `L-007` |
+| No unclaimed tests | ✅ — every new test maps to ATT-01, ISO-01, ISO-02, or AD-016 |
+| Documented guidelines followed | AD-016 (this fix's own decision) — implementation matches exactly what AD-016 specifies (redirect for S3, proxy for local, `url` always self-hosted); AD-012 (service/route-layer ownership checks) — followed for levels (a) and (c), **not fully defended by tests** for level (b) |
 
 ---
 
 ## Edge Cases
 
-- [x] Attacker owns `project_id`, foreign `task_id` from a different project (own or victim's) → 404 (repository-unit + my own scratch e2e test; Minor gap: no permanent router-level test)
-- [x] `entrypoint.sh` migration failure aborts container start (`set -e`, read-only review)
-- [x] All 6 repositories inherit generic `get_by_id`/`delete` without redefinition
+- [x] `AttachmentOut.url` dereferenceable for local backend (real file bytes returned)
+- [x] `AttachmentOut.url` dereferenceable for S3 backend (307 + real `Location`)
+- [x] Download route requires a valid session (401)
+- [x] Download route 404s when project isn't owned by caller
+- [ ] Download route 404s when task isn't owned by the given project — **not covered by any router/e2e test; only true by inspection + mutation-confirmed absence of a test**
+- [x] Download route 404s when attachment isn't owned by the given task
+- [x] Nonexistent attachment → 404
 
 ---
 
 ## Gate Check
 
-- **Gate command**: `uv sync --locked && uv run pytest -q && uv run pip-audit`
-- **Result**: 182 passed, 0 failed, 0 skipped
+- **Gate command**: `uv run pytest -q && uv run pip-audit`
+- **Result**: 197 passed, 0 failed, 0 skipped
 - **pip-audit**: "No known vulnerabilities found"
-- **Test count before this round** (`954d17b`): 175
-- **Test count after this round** (`HEAD`): 182
-- **Delta**: +7 (5 in `test_base_repository.py`, 2 in `test_task_repository.py::TestTaskRepositoryGetById`) — matches the diff exactly, no deletions or weakened assertions found
+- **Test count before T19** (`8a75c02`): 182
+- **Test count after T19** (`HEAD`): 197
+- **Delta**: +15 — matches the diff exactly (5 attachment-repository tests, 2 local-storage tests, 4 S3-storage tests, and 5 download-route tests including the auth-boundary parametrized entry — no deletions or weakened assertions found)
 
 ---
 
-## Fix Plans
+## Discrimination Sensor
 
-### Fix 1 (Minor): No router/e2e-level test for "own project_id + foreign-project task_id"
+| Mutation | File:line | Description | Killed? |
+| -------- | --------- | ------------ | ------- |
+| M1 | `app/api/routers/attachments.py:115` | Removed project-ownership check (`_get_owned_project_id`) from the download route | ✅ Killed |
+| M2 | `app/api/routers/attachments.py:116-118` | Removed task-to-project ownership check (`TaskRepository.get_for_project` + 404 branch) from the download route | ❌ **Survived** |
+| M3 | `app/api/routers/attachments.py:119` | Swapped scoped `AttachmentRepository.get_for_task` for unscoped `get_by_id` | ✅ Killed |
 
-- **Root cause**: `test_tasks_router.py`/`test_attachments_router.py` test the classic cross-user IDOR shape (foreign `project_id` + foreign `task_id`) thoroughly, but not the narrower "attacker's own project in the URL, victim/foreign task_id" combination that the new nested-route topology specifically opens up. The scenario IS provably safe today (repository-unit test + generic 404-mapping test compose to cover it, confirmed live via mutation M1), but there's no single regression test pinning the combined HTTP-level behavior.
-- **Fix task**: Add 1-2 tests to `test_tasks_router.py` (and optionally `test_attachments_router.py`) asserting 404 when a caller's own `project_id` is combined with a `task_id` that exists but belongs to a different project (same user's other project, and/or another user's project).
-- **Priority**: Minor — not a regression, not currently exploitable; closes a coverage-layering gap surfaced by this round's route refactor.
+**Sensor depth**: lightweight (3 mutations, one per ownership level), consistent with the required tiering for this feature and proportional to the download route being a brand-new authenticated endpoint on a historically fragile path.
+**Result**: 2/3 killed — ❌ **FAIL**.
+
+---
+
+## Fix Plan
+
+### Fix 1 (Blocking): No router/e2e-level test for "task belongs to a different project" on the download route
+
+- **Root cause**: `TestDownloadAttachment` covers level (a) (`test_download_for_other_users_attachment_returns_404`) and level (c) (`test_download_for_attachment_of_a_different_task_returns_404`), but no test isolates level (b) — caller's own valid `project_id` combined with a `task_id` that genuinely belongs to a *different* project. This is the exact gap class already tracked as candidate lesson `L-007` (from the prior verification round, flagged against `PATCH`/`DELETE` task routes and shipped as Minor). On this brand-new route it is the difference between a killed and a surviving mutant (M2, above).
+- **Fix task**: Add `test_download_for_task_in_different_project_returns_404` to `tests/integration/api/test_attachments_router.py::TestDownloadAttachment` — same user owns two projects (A, B) each with one task; attachment belongs to A's task; request `GET /projects/{A}/tasks/{B's task_id}/attachments/{attachment_id}/download` → expect 404. Mirrors the shape of `test_update_other_users_task_returns_404` but isolates the *same-user, cross-project* combination instead of the cross-user one.
+- **Priority**: **Blocking** — per this round's explicit IDOR-focus rule, a surviving mutant on the ownership-check axis of a new authenticated route is treated as a FAIL, even though the deployed code is currently correct.
 
 ### Fix 2 (Minor, carried forward, unchanged): Project name 1–100 char boundary untested
 
-- Unchanged from prior rounds — still open, still out of scope, still Minor. `tests/integration/api/test_projects_router.py` has no explicit empty-name/101-char-name → 422 test.
+- Unchanged from prior rounds — still open, still out of scope for T19, still Minor.
 
 ---
 
@@ -193,31 +196,27 @@ No conjunction-rule shortfalls found in the diff surface for this round.
 
 | Requirement | Previous Status | New Status |
 | --- | --- | --- |
-| ISO-01 | ✅ Verified | ✅ Verified (re-confirmed against nested routes) |
-| ISO-02 | ✅ Verified | ✅ Verified (re-confirmed; Minor router-level coverage gap noted, not a regression) |
-| TASK-01..04 | ✅ Verified | ✅ Verified (re-confirmed against nested routes) |
-| STAT-01 | ✅ Verified | ✅ Verified (re-confirmed) |
-| TAG-01, TAG-02 | ✅ Verified | ✅ Verified (re-confirmed) |
-| ATT-01..03 | ✅ Verified | ✅ Verified (re-confirmed against nested routes) |
-| AUTH-01..05, PROJ-02..04 | ✅ Verified | ✅ Verified (unaffected by this round's diff, unchanged) |
-| PROJ-01 (boundary) | ⚠️ Minor gap | ⚠️ Minor gap (unchanged, still open, still out of scope) |
+| ATT-01 | ⚠️ Gap (AD-016) — `url` not dereferenceable | ✅ Verified — `url` now genuinely dereferenceable for both storage backends, proven end-to-end |
+| ISO-01 | ✅ Verified | ✅ Verified — download route added to the systematic 401 check |
+| ISO-02 | ✅ Verified | ⚠️ **Gap** — levels (a) and (c) verified on the new download route; level (b) not defended by any test (surviving mutant M2) |
+| All other requirements | ✅ Verified (unaffected by T19's diff) | ✅ Verified (unaffected, unchanged) |
 
 ---
 
 ## Summary
 
-**Overall**: ✅ Ready
+**Overall**: ❌ Not Ready — one blocking gap
 
-**Spec-anchored check**: 12/12 re-derived ACs (for routes touched by the nesting refactor) matched spec outcome precisely against the current nested paths; 0 spec-precision gaps
-**Sensor**: 3/3 mutations killed, 0 survived (all mutations targeted the IDOR-critical code path: project-URL ownership, task-to-project membership, and the root repository method behind project ownership)
-**Gate**: 182 passed, 0 failed, 0 skipped; `pip-audit` clean
+**Spec-anchored check**: ATT-01 fully re-derived and matched (Section 1) — the core purpose of T19 is genuinely achieved. 0 spec-precision gaps in this round.
+**Sensor**: 2/3 mutations killed, **1 survived** (M2 — task-to-project ownership check on the new download route has no discriminating router-level test)
+**Gate**: 197 passed, 0 failed, 0 skipped; `pip-audit` clean
 
 **What works**:
-1. **IDOR protection through the route refactor — confirmed intact, not weakened.** The new two-layer check (project-URL ownership via `ProjectRepository.get_for_user`, then task-to-project membership via `TaskRepository.get_for_project`) is genuinely simpler than the old flat-route chain, and genuinely still safe — proven with 3 direct mutations against the real code (not inferred from the commit message), including one (M3) that failed 8 tests across both the router and repository layers when the project-ownership filter was removed.
-2. **BaseRepository is genuinely generic** — parameterized by a per-subclass `model` attribute, not hardcoded; all 5 repositories inherit unchanged, verified by a discriminating test that would fail if `get_by_id` secretly queried a fixed table.
-3. **Auto-migration entrypoint is correct** — `set -e` + no swallowed exit code + `exec` handoff only after a successful migration.
-4. **No repository public signature changed in a way that broke an uncovered caller** — cross-checked every `self._xxx_repository.*` call site in `app/services/*.py` against the current repository classes.
+1. **ATT-01 is genuinely fixed.** `AttachmentOut.url` now points at a real, dereferenceable download endpoint in all three response shapes, proven by tests that actually follow the URL and get real content (local) or a real redirect target (S3), not just field-presence checks. This is exactly the gap AD-016 describes, now closed with real evidence.
+2. **Storage abstraction (`get_url`/`read`) is correctly implemented and tested** for both backends, with real file I/O for local and asserted-call-shape mocks for S3, consistent error handling matching the existing `save`/`delete` pattern.
+3. **Two of three ownership levels on the new download route are defended by real tests and confirmed by mutation** (M1: project ownership; M3: attachment-to-task ownership).
+4. **401 boundary correctly extended** to the new route via the systematic `_PROTECTED_ROUTES` parametrized list.
 
-**Issues found**: One Minor coverage-layering gap (Fix 1 above) — the specific "own project + foreign-project task" IDOR sub-scenario is provably safe (unit test + generic 404-mapping test compose to cover it) but lacks a dedicated router/e2e-level regression test. Not a security regression; recommended as routine test-debt cleanup. One pre-existing Minor gap (Fix 2, project name boundary) carried forward unchanged.
+**Issues found**: One blocking gap — the task-to-project ownership check (level b) on the new `GET .../attachments/{id}/download` route is implemented correctly in production code (confirmed by direct code reading) but has **no test that would catch a regression removing it** (confirmed empirically: mutation M2 removed the check and the full attachment/auth-boundary test suite still passed, 24/24). This is a recurrence of the same gap class already tracked as candidate lesson `L-007`, now on a new route.
 
-**Next steps**: Ship as-is. Fix 1 and Fix 2 can be picked up together as routine test-debt cleanup; neither blocks release.
+**Next steps**: Add the fix task described in Fix 1 (one router-level test isolating the same-user, cross-project task/attachment combination for the download route), re-run the sensor to confirm M2 now kills, then re-verify. This is a small, well-scoped fix — not a redesign — and does not require touching production code, only test coverage.

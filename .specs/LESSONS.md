@@ -56,6 +56,12 @@ Seen once or not yet corroborated. Tracked, not trusted.
 - evidence: tests/integration/api/test_tasks_router.py (ISO-02, router layer) (routes)
 - last seen: 2026-07-24T12:21:34Z
 
+### L-008 — When a spec AC names a stronger-sounding term than what a weaker synonym would satisfy (e.g. URL vs. reference/identifier), write the test to exercise the field at that literal strength — actually dereference a returned URL and assert on real content or a redirect — not just assert the field is present or non-empty.
+- signal: `ac_gap` · recurrence: 1 feature(s) · scope: `attachments` · harmful: 0
+- features: taskly-api
+- evidence: ATT-01 (attachments)
+- last seen: 2026-07-24T17:59:12Z
+
 ## Quarantined (failed when applied — ignore)
 
 A confirmed lesson that recurred alongside failure. Kept for the maintainer to review.

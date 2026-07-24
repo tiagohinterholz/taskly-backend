@@ -3,7 +3,7 @@
   "promote_threshold": 2,
   "window_days": 45,
   "quarantine_threshold": 2,
-  "next_id": 8,
+  "next_id": 9,
   "lessons": [
     {
       "id": "L-001",
@@ -130,6 +130,24 @@
       ],
       "created": "2026-07-24T12:21:34Z",
       "last_seen": "2026-07-24T12:21:34Z"
+    },
+    {
+      "id": "L-008",
+      "key": "ac_gap::when a spec ac names a stronger sounding term than what a weaker synonym would satisfy e g url vs reference identifier write the test to exercise the field at that literal strength actually dereference a returned url and assert on real content or a redirect not just assert the field is present or non empty",
+      "text": "When a spec AC names a stronger-sounding term than what a weaker synonym would satisfy (e.g. URL vs. reference/identifier), write the test to exercise the field at that literal strength — actually dereference a returned URL and assert on real content or a redirect — not just assert the field is present or non-empty.",
+      "signal": "ac_gap",
+      "scope": "attachments",
+      "status": "candidate",
+      "features": [
+        "taskly-api"
+      ],
+      "recurrence": 1,
+      "harmful": 0,
+      "evidence": [
+        "ATT-01 (attachments)"
+      ],
+      "created": "2026-07-24T17:59:12Z",
+      "last_seen": "2026-07-24T17:59:12Z"
     }
   ]
 }
