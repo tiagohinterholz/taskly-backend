@@ -101,11 +101,11 @@
 ## Handoff
 
 - **Feature**: `backend/.specs/features/taskly-api`
-- **Phase / Task**: Execute em andamento — Fases 1-3 concluídas + Fase 4 (T6, T9, T12) concluída; T18 (fix de ownership, ISO-02) adicionada ao plano e prestes a ser disparada antes da Fase 5
-- **Completed**: spec.md, design.md, tasks.md (18 tasks); commits até `83e9587` (T12) — 62 testes passando
-- **In-progress**: nenhuma task em execução; prestes a disparar T18
-- **Next step**: Disparar agente para T18 (fix de ownership em Project/Task repository+service), depois seguir pra Fase 5 (T7 → T10 → T13 → T15, routers)
+- **Phase / Task**: Execute em andamento — Fases 1-4 concluídas, incl. T18 (fix de ownership); Fase 5 (routers) prestes a ser disparada
+- **Completed**: spec.md, design.md, tasks.md (18 tasks); commits até `2deb237` (T18) — 94 testes passando (unit + integration)
+- **In-progress**: nenhuma task em execução; prestes a disparar Fase 5
+- **Next step**: Disparar sub-agente da Fase 5 (T7 auth router → T10 project router → T13 task router → T15 attachment router, sequencial, testes e2e contra Postgres real)
 - **Blockers**: none
-- **Uncommitted files**: `.specs/features/taskly-api/tasks.md`, `.specs/STATE.md` (esta rodada, a commitar agora)
+- **Uncommitted files**: nenhum
 - **Branch**: master
-- **Notas de ambiente**: Postgres de dev local em `localhost:5433`, container `backend-postgres-1` healthy, mantido entre fases. `bcrypt==4.0.1` fixado por incompatibilidade com `passlib`. `pytest-asyncio` configurado com `tests/conftest.py` carregando `.env` antes de `app.core.db`. Fixture `db_session` em `tests/integration/conftest.py` (truncate-all-tables) — reutilizar em T7/T10/T13/T15. Exceções de domínio já existentes para os routers mapearem: `EmailAlreadyRegisteredError`→409, `InvalidCredentialsError`→401, `InvalidRefreshTokenError`→401, `RateLimitExceededError`→429, `ProjectHasTasksError`→409, `TaskTitleRequiredError`→422, `TagTooLongError`→422 (expõe `.tag`), e agora (via T18) `ProjectNotFoundError`→404, `TaskNotFoundError`→404.
+- **Notas de ambiente**: Postgres de dev local em `localhost:5433`, container `backend-postgres-1` healthy. `bcrypt==4.0.1` fixado. Fixture `db_session` em `tests/integration/conftest.py` — reutilizar em T7/T10/T13/T15. Exceções de domínio prontas pros routers mapearem: `EmailAlreadyRegisteredError`→409, `InvalidCredentialsError`→401, `InvalidRefreshTokenError`→401, `RateLimitExceededError`→429, `ProjectHasTasksError`→409, `ProjectNotFoundError`→404, `TaskTitleRequiredError`→422, `TagTooLongError`→422 (`.tag`), `TaskNotFoundError`→404. **Atenção**: `TaskService.update`/`delete` agora exigem `project_id` como primeiro parâmetro (mudança do T18). A rota de tarefa é FLAT (`PATCH/DELETE /tasks/{id}`, sem `project_id` na URL, conforme `spec.md`/`tasks.md`/frontend spec — não mudar isso). Então o router T13 precisa: (1) buscar a tarefa por `task_id` sem escopo ainda (vai exigir um novo `TaskRepository.get_by_id(task_id) -> Task | None`, não existe ainda), (2) pegar `task.project_id`, (3) chamar `ProjectRepository.get_for_user(project_id, user_id)` (já existe, do T18) pra confirmar que o projeto é do usuário logado — 404 se não for, (4) só então chamar `TaskService.update/delete(project_id, task_id, ...)`, que reverifica internamente (defesa em profundidade, redundância aceitável).
