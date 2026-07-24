@@ -424,13 +424,13 @@ T16 → T17
 - Skill: NONE
 
 **Done when**:
-- [ ] E2E: registro 201, registro duplicado 409, login 200 com `Set-Cookie`, login inválido 401
-- [ ] E2E: refresh emite novo par de cookies, refresh com token revogado/expirado retorna 401
-- [ ] E2E: logout limpa cookies e revoga o refresh token
-- [ ] E2E: rota protegida sem cookie retorna 401 (ISO-01)
-- [ ] E2E: 6ª tentativa de login em 15min retorna 429
-- [ ] Gate check passa: `uv run pytest tests/unit tests/integration -q`
-- [ ] Test count: 8+ testes e2e
+- [x] E2E: registro 201, registro duplicado 409, login 200 com `Set-Cookie`, login inválido 401
+- [x] E2E: refresh emite novo par de cookies, refresh com token revogado/expirado retorna 401
+- [x] E2E: logout limpa cookies e revoga o refresh token
+- [x] E2E: rota protegida sem cookie retorna 401 (ISO-01)
+- [x] E2E: 6ª tentativa de login em 15min retorna 429
+- [x] Gate check passa: `uv run pytest tests/unit tests/integration -q`
+- [x] Test count: 8+ testes e2e
 
 **Tests**: integration
 **Gate**: full
