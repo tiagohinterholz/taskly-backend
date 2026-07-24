@@ -559,12 +559,12 @@ T16 → T17
 - Skill: NONE
 
 **Done when**:
-- [ ] `docker build` conclui com sucesso, gerando a imagem final a partir do stage `runtime`
-- [ ] Stage `runtime` não contém `uv` nem toolchain de build (verificado, ex.: `docker run --rm <imagem> which uv` retorna vazio/erro)
-- [ ] `docker run` sobe o container e `whoami` dentro dele retorna `appuser` (não `root`)
-- [ ] Tentativa de escrever fora dos diretórios com `chown` explícito (ex.: `touch /usr/local/lib/...`) falha por permissão dentro do container
-- [ ] `GET /health` responde 200 através do container publicado
-- [ ] `.dockerignore` exclui `.venv/`, `.git/`, `.specs/`, `tests/` da build context
+- [x] `docker build` conclui com sucesso, gerando a imagem final a partir do stage `runtime`
+- [x] Stage `runtime` não contém `uv` nem toolchain de build (verificado, ex.: `docker run --rm <imagem> which uv` retorna vazio/erro)
+- [x] `docker run` sobe o container e `whoami` dentro dele retorna `appuser` (não `root`)
+- [x] Tentativa de escrever fora dos diretórios com `chown` explícito (ex.: `touch /usr/local/lib/...`) falha por permissão dentro do container
+- [x] `GET /health` responde 200 através do container publicado
+- [x] `.dockerignore` exclui `.venv/`, `.git/`, `.specs/`, `tests/` da build context
 
 **Tests**: none (verificação via gate manual dos itens acima)
 **Gate**: build

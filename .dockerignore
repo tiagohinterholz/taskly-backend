@@ -1,0 +1,25 @@
+# Never ship the host virtualenv or dev-only local artifacts into the build
+# context — the image builds its own venv inside the builder stage.
+.venv/
+__pycache__/
+*.pyc
+
+.git/
+.gitignore
+
+# Spec/planning docs and tests are not needed to run the app.
+.specs/
+tests/
+.pytest_cache/
+
+# Secrets and dev-only compose file.
+.env
+docker-compose.yml
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+
+# Misc
+.DS_Store
