@@ -98,15 +98,39 @@
 - **Date**: 2026-07-23
 - **Status**: active
 
+### AD-013
+- **Decision**: Todas as rotas de tarefa/anexo aninhadas sob `/projects/{project_id}/tasks/{task_id}[/attachments/...]` — sem exceção. A rota flat `PATCH/DELETE /tasks/{id}` foi eliminada.
+- **Reason**: Revisão de código pelo usuário pós-verificação apontou inconsistência (criar/listar tarefa era aninhado, editar/deletar era flat), o que forçava um lookup não-escopado (`TaskRepository.get_by_id`) seguido de checagem de ownership — mais complexo que necessário e a própria causa da complexidade extra introduzida no T18. Com `project_id` sempre na URL, o router verifica ownership do projeto uma vez só, no topo do handler.
+- **Trade-off**: Breaking change de contrato de API (`refactor(api)!` com `BREAKING CHANGE:` no commit) — como o frontend ainda não tinha iniciado o Execute, o custo foi mínimo (só atualizar `design.md` do frontend antes de começar).
+- **Scope**: Backend (rotas) + Frontend (contrato consumido, `design.md` já atualizado).
+- **Date**: 2026-07-24
+- **Status**: active
+
+### AD-014
+- **Decision**: `BaseRepository[Model]` genérica (`app/repositories/base.py`) com `__init__`/`get_by_id`/`delete`; todos os 6 repositories herdam dela, mantendo apenas métodos entidade-específicos (`create`, `get_for_user`, `list_for_project`, etc.) como overrides.
+- **Reason**: Duplicação real e evidenciada (mesmo `__init__` em 6 arquivos, mesmo padrão `get_by_id`/`delete` em 3 deles) — apontada em revisão de código.
+- **Trade-off**: Uma camada de indireção a mais (generics) em troca de ~6 blocos duplicados removidos; métodos genéricos precisam ser lidos junto com a classe base pra entender o contrato completo de cada repository.
+- **Scope**: Backend (qualquer repository futuro deve herdar de `BaseRepository` por padrão, só implementando o que for genuinamente específico).
+- **Date**: 2026-07-24
+- **Status**: active
+
+### AD-015
+- **Decision**: Container roda `alembic upgrade head` automaticamente via `entrypoint.sh` antes de subir o `uvicorn`; falha de migration aborta o start do container (não sobe API contra schema desatualizado).
+- **Reason**: Gap real apontado pelo usuário — o Dockerfile copiava os arquivos do Alembic mas nunca executava a migration; um deploy novo subiria a API contra um banco vazio.
+- **Trade-off**: Nenhum runtime extra além do próprio tempo de migration no start; em clusters com múltiplas réplicas subindo ao mesmo tempo, migrations concorrentes poderiam colidir (não é o caso do deploy planejado — EC2 de instância única) — documentar como ponto de atenção se a topologia mudar.
+- **Scope**: Backend (deploy/infra).
+- **Date**: 2026-07-24
+- **Status**: active
+
 ## Handoff
 
-- **Feature**: `backend/.specs/features/taskly-api` — ✅ **VERIFIED (PASS)**, feature encerrada
-- **Phase / Task**: Execute concluído — 18 tasks (T1-T18) em 7 fases + Verifier com 1 rodada de fix (5 gaps, 1 era bug real de anexos órfãos) + re-verificação PASS (34/34 ACs, 5/5 mutações mortas)
-- **Completed**: spec.md, design.md, tasks.md, validation.md (PASS, commit `954d17b`), LESSONS.md/lessons.json (6 lições candidatas); 175 testes passando; `docker build` verificado (multi-stage, não-root)
+- **Feature**: `backend/.specs/features/taskly-api` — ✅ **VERIFIED (PASS)**, feature encerrada; pós-verificação recebeu uma rodada extra de revisão manual do usuário (README, deploy AWS, consistência de rotas, duplicação de repositories, migração automática)
+- **Phase / Task**: Execute + Verify concluídos; rodada de melhorias pós-review concluída (README, `COOKIE_SECURE` documentado, migração automática no container, `BaseRepository`, rotas de task/anexo totalmente aninhadas)
+- **Completed**: spec.md, design.md, tasks.md, validation.md (PASS, commit `954d17b`), LESSONS.md/lessons.json (6 lições candidatas), README.md; 182 testes passando (era 175 na verificação, +7 do refactor de `BaseRepository`); `docker build` verificado (multi-stage, não-root, migração automática)
 - **In-progress**: nenhuma
-- **Next step**: Backend pronto. Próximo passo do projeto Taskly é o **frontend** (`frontend/.specs/features/taskly-ui`) — Design e Tasks já foram feitos lá antes de começarmos o backend; falta rodar o Execute do frontend seguindo o mesmo padrão (sub-agente por fase, Verifier ao final). Lições deste backend (`backend/.specs/lessons.json`) são um store separado do frontend (`frontend/.specs/lessons.json` ainda não existe) — não carregam automaticamente lá, mas os padrões valem como guia manual: testar boundary de campos, testar flags de segurança de cookie via header cru, testar todas as rotas protegidas explicitamente, limpar recursos externos ao deletar entidade pai.
+- **Next step**: Backend pronto — inclusive pra deploy (AWS EC2 + S3 + Aurora, só variáveis de ambiente). Próximo passo do projeto Taskly é o **frontend** (`frontend/.specs/features/taskly-ui`) — Design e Tasks já foram feitos lá antes de começarmos o backend (contrato de rotas já atualizado em `design.md`); falta rodar o Execute do frontend seguindo o mesmo padrão (sub-agente por fase, Verifier ao final). Lições deste backend (`backend/.specs/lessons.json`) são um store separado do frontend — não carregam automaticamente lá, mas os padrões valem como guia manual: testar boundary de campos, testar flags de segurança de cookie via header cru, testar todas as rotas protegidas explicitamente, limpar recursos externos ao deletar entidade pai.
 - **Blockers**: none
-- **Uncommitted files**: nenhum
+- **Uncommitted files**: `.specs/features/taskly-api/spec.md`, `.specs/features/taskly-api/tasks.md`, `.specs/STATE.md` (rotas atualizadas nesta rodada, a commitar agora)
 - **Branch**: master
 - **Gap Minor não bloqueante ainda aberto**: boundary de nome de projeto (1-100 chars) sem teste explícito em `tests/integration/api/test_projects_router.py` — registrado como lição (L-006), não é regressão, pode ser fechado depois se sobrar tempo.
-- **Notas de ambiente**: Postgres de dev local em `localhost:5433`, container `backend-postgres-1` healthy (deixar rodando ou subir de novo com `docker compose up -d` se for parar). `bcrypt==4.0.1` fixado. `python-multipart==0.0.31`. N+1 de anexos resolvido via `AttachmentRepository.list_for_tasks` (batch). `Dockerfile` multi-stage pronto em `Dockerfile`/`.dockerignore`.
+- **Notas de ambiente**: Postgres de dev local em `localhost:5433`, container `backend-postgres-1` healthy. `bcrypt==4.0.1` fixado. `python-multipart==0.0.31`. N+1 de anexos resolvido via `AttachmentRepository.list_for_tasks` (batch). `Dockerfile` multi-stage + `entrypoint.sh` (migração automática) prontos. Rotas de task/anexo agora 100% aninhadas sob `/projects/{id}/tasks/{id}[/attachments/...]` (AD-013) — nenhuma rota flat de tarefa restante.

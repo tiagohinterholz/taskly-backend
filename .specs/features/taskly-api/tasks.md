@@ -467,7 +467,9 @@ T16 → T17
 
 ### T13: Task router
 
-**What**: Endpoints `POST/GET /projects/{id}/tasks`, `PATCH/DELETE /tasks/{id}`.
+**What**: Endpoints `POST/GET /projects/{id}/tasks`, `PATCH/DELETE /projects/{id}/tasks/{task_id}`.
+
+> **Addendum (post-review refactor):** rota unificada sob `/projects/{id}/tasks/...` — ver `AD-013` em `STATE.md`.
 **Where**: `app/api/routers/tasks.py`
 **Depends on**: T12, T10, T18
 **Reuses**: `TaskService` (T12, ownership-checked per T18), `get_current_user` (T7), padrão de ownership do `projects.py` (T10)
@@ -495,7 +497,9 @@ T16 → T17
 
 ### T15: Attachment router + `AttachmentService`
 
-**What**: Endpoints `POST /tasks/{id}/attachments`, `DELETE /tasks/{id}/attachments/{attachment_id}`.
+**What**: Endpoints `POST /projects/{id}/tasks/{task_id}/attachments`, `DELETE /projects/{id}/tasks/{task_id}/attachments/{attachment_id}`.
+
+> **Addendum (post-review refactor):** rota unificada sob `/projects/{id}/tasks/...` — ver `AD-013` em `STATE.md`.
 **Where**: `app/api/routers/attachments.py`, `app/services/attachment_service.py`
 **Depends on**: T14, T13
 **Reuses**: `StorageBackend` (T14), `get_current_user` (T7), padrão de ownership de tarefa (T13)

@@ -114,7 +114,7 @@ Every ambiguity is resolved or recorded here — nothing is left silently unclea
 
 1. WHEN um usuário envia título (1–200 caracteres, único campo obrigatório) para `POST /projects/{id}/tasks` THEN o sistema SHALL criar a tarefa com status inicial "Não iniciada" e demais campos vazios/nulos se omitidos.
 2. WHEN um usuário envia título vazio ou ausente THEN o sistema SHALL retornar 422 sem criar a tarefa.
-3. WHEN um usuário atualiza qualquer campo (título, descrição curta, descrição completa, prazo, tags, status) via `PATCH /tasks/{id}` THEN o sistema SHALL persistir a alteração e retornar o recurso atualizado.
+3. WHEN um usuário atualiza qualquer campo (título, descrição curta, descrição completa, prazo, tags, status) via `PATCH /projects/{project_id}/tasks/{id}` THEN o sistema SHALL persistir a alteração e retornar o recurso atualizado.
 4. WHEN um usuário chama `GET /projects/{id}/tasks` THEN o sistema SHALL retornar todas as tarefas do projeto pertencentes a ele, com todos os campos, suficiente para renderizar lista ou kanban.
 5. WHEN um usuário deleta uma tarefa THEN o sistema SHALL remover a tarefa e seus anexos associados.
 6. WHEN um usuário envia prazo em formato inválido THEN o sistema SHALL retornar 422 com mensagem de validação.
@@ -131,7 +131,7 @@ Every ambiguity is resolved or recorded here — nothing is left silently unclea
 
 **Acceptance Criteria**:
 
-1. WHEN um usuário envia um novo status (um de: `not_started`, `in_progress`, `done`, `cancelled`) via `PATCH /tasks/{id}` THEN o sistema SHALL aceitar a transição para qualquer um dos 4 estados, sem restrição de ordem.
+1. WHEN um usuário envia um novo status (um de: `not_started`, `in_progress`, `done`, `cancelled`) via `PATCH /projects/{project_id}/tasks/{id}` THEN o sistema SHALL aceitar a transição para qualquer um dos 4 estados, sem restrição de ordem.
 2. WHEN um usuário envia um valor de status fora dos 4 permitidos THEN o sistema SHALL retornar 422.
 
 **Independent Test**: mover uma tarefa por todas as combinações de status via API, incluindo "para trás" (`done` → `not_started`).
@@ -161,10 +161,10 @@ Every ambiguity is resolved or recorded here — nothing is left silently unclea
 
 **Acceptance Criteria**:
 
-1. WHEN um usuário envia um arquivo (≤10MB) via `POST /tasks/{id}/attachments` THEN o sistema SHALL armazená-lo através da abstração de storage configurada e retornar a URL/referência do anexo.
+1. WHEN um usuário envia um arquivo (≤10MB) via `POST /projects/{project_id}/tasks/{id}/attachments` THEN o sistema SHALL armazená-lo através da abstração de storage configurada e retornar a URL/referência do anexo.
 2. WHEN um usuário envia um arquivo maior que 10MB THEN o sistema SHALL retornar 413 sem salvar.
 3. WHEN o storage configurado falha ao salvar o anexo THEN o sistema SHALL retornar 5xx sem afetar os demais dados já salvos da tarefa.
-4. WHEN um usuário remove um anexo via `DELETE /tasks/{id}/attachments/{attachment_id}` THEN o sistema SHALL apagá-lo do storage e da lista de anexos da tarefa.
+4. WHEN um usuário remove um anexo via `DELETE /projects/{project_id}/tasks/{id}/attachments/{attachment_id}` THEN o sistema SHALL apagá-lo do storage e da lista de anexos da tarefa.
 
 **Independent Test**: subir um anexo → confirmar referência na tarefa → remover → confirmar que some da listagem.
 
