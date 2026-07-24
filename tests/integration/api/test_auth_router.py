@@ -1,9 +1,11 @@
 import uuid
 
+import pytest
 from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.api.routers.auth as auth_router_module
 from app.api.dependencies import get_current_user, get_db_session, get_jwt_service
 from app.models.user import User
 from app.repositories.user_repository import UserRepository
@@ -87,6 +89,51 @@ class TestLogin:
         assert response.status_code == 401
         assert "access_token" not in response.cookies
 
+    async def test_login_sets_httponly_and_samesite_lax_cookies_in_dev_mode(
+        self, client: AsyncClient
+    ) -> None:
+        """AD-003: session cookies must be HttpOnly (JS can't read them —
+        mitigates XSS token theft) and SameSite=Lax (mitigates CSRF).
+        httpx's `response.cookies` dict only exposes name/value pairs, never
+        the cookie flags, so this reads the raw Set-Cookie header instead —
+        the discrimination sensor proved that dict-only assertions don't
+        catch a regression here (removing httponly=True survived 156 tests).
+        Dev-mode default (COOKIE_SECURE unset) is exercised here since
+        that's what CI/local dev actually runs; Secure must be absent so the
+        cookie is still sent over plain http://localhost.
+        """
+        email = _unique_email("login-cookie-flags")
+        await client.post("/auth/register", json={"email": email, "password": _PASSWORD})
+
+        response = await client.post("/auth/login", json={"email": email, "password": _PASSWORD})
+
+        assert response.status_code == 200
+        set_cookie_headers = response.headers.get_list("set-cookie")
+        assert len(set_cookie_headers) == 2
+        access_cookie = next(h for h in set_cookie_headers if h.startswith("access_token="))
+        refresh_cookie = next(h for h in set_cookie_headers if h.startswith("refresh_token="))
+        for cookie_header in (access_cookie, refresh_cookie):
+            assert "HttpOnly" in cookie_header
+            assert "samesite=lax" in cookie_header.lower()
+            assert "secure" not in cookie_header.lower()
+
+    async def test_login_sets_secure_cookies_when_cookie_secure_enabled(
+        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(auth_router_module, "_COOKIE_SECURE", True)
+        email = _unique_email("login-cookie-secure")
+        await client.post("/auth/register", json={"email": email, "password": _PASSWORD})
+
+        response = await client.post("/auth/login", json={"email": email, "password": _PASSWORD})
+
+        assert response.status_code == 200
+        set_cookie_headers = response.headers.get_list("set-cookie")
+        access_cookie = next(h for h in set_cookie_headers if h.startswith("access_token="))
+        refresh_cookie = next(h for h in set_cookie_headers if h.startswith("refresh_token="))
+        for cookie_header in (access_cookie, refresh_cookie):
+            assert "HttpOnly" in cookie_header
+            assert "secure" in cookie_header.lower()
+
 
 class TestRefresh:
     async def test_refresh_issues_new_cookie_pair(
@@ -116,6 +163,27 @@ class TestRefresh:
         stored = await UserRepository(db_session).get_by_email(email)
         assert stored is not None
         assert jwt_service.decode(response.cookies["access_token"]) == stored.id
+
+    async def test_refresh_sets_httponly_and_samesite_lax_cookies(
+        self, client: AsyncClient
+    ) -> None:
+        """Same AD-003 property as login (see TestLogin's dev-mode cookie
+        flags test) — /auth/refresh mints a fresh cookie pair through the
+        same _set_session_cookies() helper and must carry the same flags.
+        """
+        email = _unique_email("refresh-cookie-flags")
+        await client.post("/auth/register", json={"email": email, "password": _PASSWORD})
+        await client.post("/auth/login", json={"email": email, "password": _PASSWORD})
+
+        response = await client.post("/auth/refresh")
+
+        assert response.status_code == 200
+        set_cookie_headers = response.headers.get_list("set-cookie")
+        access_cookie = next(h for h in set_cookie_headers if h.startswith("access_token="))
+        refresh_cookie = next(h for h in set_cookie_headers if h.startswith("refresh_token="))
+        for cookie_header in (access_cookie, refresh_cookie):
+            assert "HttpOnly" in cookie_header
+            assert "samesite=lax" in cookie_header.lower()
 
     async def test_refresh_missing_token_returns_401(self, client: AsyncClient) -> None:
         response = await client.post("/auth/refresh")
