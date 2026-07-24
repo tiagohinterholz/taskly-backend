@@ -1,11 +1,27 @@
 import uuid
+from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
 from httpx import AsyncClient
 
 import app.repositories.attachment_repository as attachment_repository_module
 from app.models.task import TaskStatus
+from app.storage.backend import StorageError, get_storage_backend
+from app.storage.local import LocalStorageBackend
 from tests.integration.api.conftest import register_and_login
+
+
+class _FailingStorageBackend:
+    """Fake StorageBackend that always fails deletes — mirrors the fake used
+    in test_attachments_router.py for ATT-01 AC3-style storage-failure tests.
+    """
+
+    def save(self, key: str, content: bytes, content_type: str) -> str:
+        raise StorageError("simulated storage outage")
+
+    def delete(self, key: str) -> None:
+        raise StorageError("simulated storage outage")
 
 
 def _unique_email(prefix: str) -> str:
@@ -255,6 +271,59 @@ class TestDeleteTask:
         response = await client.delete(f"/tasks/{task_id}")
 
         assert response.status_code == 404
+
+    async def test_delete_task_removes_its_attachment_files_from_storage(
+        self, app: FastAPI, client: AsyncClient, tmp_path: Path
+    ) -> None:
+        """TASK-04: deleting a task must remove its associated attachments —
+        not just the DB rows (which cascade-delete automatically), but the
+        actual files in storage. Regression test for the orphaned-file leak.
+        """
+        app.dependency_overrides[get_storage_backend] = lambda: LocalStorageBackend(
+            base_path=str(tmp_path)
+        )
+        await register_and_login(client, _unique_email("task-delete-att"))
+        project_id = await _create_project(client)
+        created = await client.post(f"/projects/{project_id}/tasks", json={"title": "With attachment"})
+        task_id = created.json()["id"]
+        upload = await client.post(
+            f"/tasks/{task_id}/attachments",
+            files={"file": ("notes.txt", b"hello world", "text/plain")},
+        )
+        assert upload.status_code == 201, upload.text
+        storage_key = upload.json()["storage_key"]
+        assert (tmp_path / storage_key).exists()
+
+        response = await client.delete(f"/tasks/{task_id}")
+
+        assert response.status_code == 204
+        assert not (tmp_path / storage_key).exists()
+        listing = await client.get(f"/projects/{project_id}/tasks")
+        assert listing.json() == []
+
+    async def test_delete_task_returns_502_and_keeps_task_when_storage_fails(
+        self, app: FastAPI, client: AsyncClient, tmp_path: Path
+    ) -> None:
+        app.dependency_overrides[get_storage_backend] = lambda: LocalStorageBackend(
+            base_path=str(tmp_path)
+        )
+        await register_and_login(client, _unique_email("task-delete-att-fail"))
+        project_id = await _create_project(client)
+        created = await client.post(f"/projects/{project_id}/tasks", json={"title": "With attachment"})
+        task_id = created.json()["id"]
+        upload = await client.post(
+            f"/tasks/{task_id}/attachments",
+            files={"file": ("notes.txt", b"hello world", "text/plain")},
+        )
+        assert upload.status_code == 201, upload.text
+
+        app.dependency_overrides[get_storage_backend] = lambda: _FailingStorageBackend()
+        response = await client.delete(f"/tasks/{task_id}")
+
+        assert response.status_code == 502
+        listing = await client.get(f"/projects/{project_id}/tasks")
+        [task] = listing.json()
+        assert task["id"] == task_id
 
 
 class TestNoNPlusOneOnListing:

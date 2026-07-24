@@ -1,26 +1,59 @@
 import itertools
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.attachment import Attachment
 from app.models.task import Task, TaskStatus
+from app.repositories.attachment_repository import AttachmentRepository
 from app.repositories.task_repository import TaskRepository
 from app.services.task_service import (
     TagTooLongError,
+    TaskAttachmentCleanupError,
     TaskNotFoundError,
     TaskService,
     TaskTitleRequiredError,
 )
+from app.storage.backend import StorageBackend, StorageError
 
 
 def _make_service() -> tuple[TaskService, AsyncMock, AsyncMock]:
+    """Default factory used by tests that don't care about attachment
+    cleanup: no attachments means no StorageBackend calls, so behavior for
+    create/update/list and the plain delete path is unaffected.
+    """
+    service, task_repository, _, _, session = _make_service_with_deps()
+    return service, task_repository, session
+
+
+def _make_service_with_deps() -> tuple[TaskService, AsyncMock, AsyncMock, Mock, AsyncMock]:
     session = AsyncMock(spec=AsyncSession)
     task_repository = AsyncMock(spec=TaskRepository)
-    service = TaskService(session=session, task_repository=task_repository)
-    return service, task_repository, session
+    attachment_repository = AsyncMock(spec=AttachmentRepository)
+    attachment_repository.list_for_tasks.return_value = []
+    storage_backend = Mock(spec=StorageBackend)
+    service = TaskService(
+        session=session,
+        task_repository=task_repository,
+        attachment_repository=attachment_repository,
+        storage_backend=storage_backend,
+    )
+    return service, task_repository, attachment_repository, storage_backend, session
+
+
+def _make_attachment(task_id: uuid.UUID, storage_key: str) -> Attachment:
+    return Attachment(
+        id=uuid.uuid4(),
+        task_id=task_id,
+        filename="file.txt",
+        storage_key=storage_key,
+        content_type="text/plain",
+        size_bytes=3,
+        created_at=datetime.now(timezone.utc),
+    )
 
 
 def _make_task(
@@ -275,6 +308,43 @@ class TestDelete:
         task_repository.get_for_project.return_value = None
 
         with pytest.raises(TaskNotFoundError):
+            await service.delete(project_id, task_id)
+
+        task_repository.delete.assert_not_awaited()
+        session.commit.assert_not_awaited()
+
+    async def test_delete_removes_each_attachment_from_storage_before_deleting_task(self) -> None:
+        service, task_repository, attachment_repository, storage_backend, session = (
+            _make_service_with_deps()
+        )
+        project_id = uuid.uuid4()
+        task_id = uuid.uuid4()
+        task_repository.get_for_project.return_value = _make_task(project_id=project_id)
+        attachment_repository.list_for_tasks.return_value = [
+            _make_attachment(task_id, "key-a"),
+            _make_attachment(task_id, "key-b"),
+        ]
+
+        await service.delete(project_id, task_id)
+
+        attachment_repository.list_for_tasks.assert_awaited_once_with([task_id])
+        storage_backend.delete.assert_any_call("key-a")
+        storage_backend.delete.assert_any_call("key-b")
+        assert storage_backend.delete.call_count == 2
+        task_repository.delete.assert_awaited_once_with(task_id)
+        session.commit.assert_awaited_once()
+
+    async def test_delete_raises_cleanup_error_and_keeps_task_when_storage_fails(self) -> None:
+        service, task_repository, attachment_repository, storage_backend, session = (
+            _make_service_with_deps()
+        )
+        project_id = uuid.uuid4()
+        task_id = uuid.uuid4()
+        task_repository.get_for_project.return_value = _make_task(project_id=project_id)
+        attachment_repository.list_for_tasks.return_value = [_make_attachment(task_id, "key-a")]
+        storage_backend.delete.side_effect = StorageError("simulated storage outage")
+
+        with pytest.raises(TaskAttachmentCleanupError):
             await service.delete(project_id, task_id)
 
         task_repository.delete.assert_not_awaited()

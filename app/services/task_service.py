@@ -5,7 +5,9 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.task import Task, TaskStatus
+from app.repositories.attachment_repository import AttachmentRepository
 from app.repositories.task_repository import TaskRepository
+from app.storage.backend import StorageBackend, StorageError
 
 _MAX_TAG_LENGTH = 20
 
@@ -34,16 +36,33 @@ class TaskNotFoundError(Exception):
     """
 
 
+class TaskAttachmentCleanupError(Exception):
+    """Raised by delete() when StorageBackend fails to remove one of the
+    task's attachment files — the router maps this to a 5xx. The task and
+    its attachment rows are left untouched so nothing is deleted from the
+    database while its files are still orphaned in storage.
+    """
+
+
 class TaskService:
     """Task business rules: creation (title required, tags validated),
     free-form partial updates (any field, incl. unrestricted status
-    transitions per STAT-01), listing, and deletion. Repositories only
+    transitions per STAT-01), listing, and deletion (including removal of
+    associated attachment files from storage — TASK-04). Repositories only
     flush() (AD-011) — this service owns the transaction boundary.
     """
 
-    def __init__(self, session: AsyncSession, task_repository: TaskRepository) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        task_repository: TaskRepository,
+        attachment_repository: AttachmentRepository,
+        storage_backend: StorageBackend,
+    ) -> None:
         self._session = session
         self._task_repository = task_repository
+        self._attachment_repository = attachment_repository
+        self._storage_backend = storage_backend
 
     async def create(
         self,
@@ -88,6 +107,14 @@ class TaskService:
         owned = await self._task_repository.get_for_project(task_id, project_id)
         if owned is None:
             raise TaskNotFoundError(task_id)
+
+        attachments = await self._attachment_repository.list_for_tasks([task_id])
+        for attachment in attachments:
+            try:
+                self._storage_backend.delete(attachment.storage_key)
+            except StorageError as exc:
+                raise TaskAttachmentCleanupError(str(exc)) from exc
+
         await self._task_repository.delete(task_id)
         await self._session.commit()
 

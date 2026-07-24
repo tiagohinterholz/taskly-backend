@@ -15,10 +15,12 @@ from app.repositories.project_repository import ProjectRepository
 from app.repositories.task_repository import TaskRepository
 from app.services.task_service import (
     TagTooLongError,
+    TaskAttachmentCleanupError,
     TaskNotFoundError,
     TaskService,
     TaskTitleRequiredError,
 )
+from app.storage.backend import StorageBackend, get_storage_backend
 
 router = APIRouter(tags=["tasks"])
 
@@ -86,8 +88,16 @@ def _to_task_out(task: Task, attachments: list[Attachment]) -> TaskOut:
     )
 
 
-def _get_task_service(session: AsyncSession = Depends(get_db_session)) -> TaskService:
-    return TaskService(session=session, task_repository=TaskRepository(session))
+def _get_task_service(
+    session: AsyncSession = Depends(get_db_session),
+    storage_backend: StorageBackend = Depends(get_storage_backend),
+) -> TaskService:
+    return TaskService(
+        session=session,
+        task_repository=TaskRepository(session),
+        attachment_repository=AttachmentRepository(session),
+        storage_backend=storage_backend,
+    )
 
 
 async def _get_owned_project_id(
@@ -203,3 +213,7 @@ async def delete_task(
         await task_service.delete(project_id, task_id)
     except TaskNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="task not found") from exc
+    except TaskAttachmentCleanupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="failed to remove task attachments"
+        ) from exc
