@@ -1,16 +1,15 @@
 import uuid
 
-from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.models.attachment import Attachment
+from app.repositories.base import BaseRepository
 
 
-class AttachmentRepository:
+class AttachmentRepository(BaseRepository[Attachment]):
     """Data access for Attachment. The only layer that talks SQLAlchemy for attachments."""
 
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
+    model = Attachment
 
     async def create(
         self,
@@ -30,16 +29,6 @@ class AttachmentRepository:
         self._session.add(attachment)
         await self._session.flush()
         return attachment
-
-    async def get_by_id(self, attachment_id: uuid.UUID) -> Attachment | None:
-        result = await self._session.execute(
-            select(Attachment).where(Attachment.id == attachment_id)
-        )
-        return result.scalar_one_or_none()
-
-    async def delete(self, attachment_id: uuid.UUID) -> None:
-        await self._session.execute(delete(Attachment).where(Attachment.id == attachment_id))
-        await self._session.flush()
 
     async def list_for_tasks(self, task_ids: list[uuid.UUID]) -> list[Attachment]:
         """Batch fetch: attachments for *all* given task ids in a single

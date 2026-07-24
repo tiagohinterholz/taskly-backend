@@ -2,20 +2,23 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import func, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.refresh_token import RefreshToken
+from app.repositories.base import BaseRepository
 
 
-class RefreshTokenRepository:
+class RefreshTokenRepository(BaseRepository[RefreshToken]):
     """Data access for RefreshToken. The only layer that talks SQLAlchemy for refresh tokens.
 
     Returns rows as-is: whether a token is usable (not expired, not revoked)
     is a business-logic concern for the service layer, not this repository.
+
+    No get_by_id / delete here (unlike other repositories): refresh tokens
+    are looked up by hash and retired via revoke(), never fetched or removed
+    by id.
     """
 
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
+    model = RefreshToken
 
     async def create(self, user_id: uuid.UUID, token_hash: str, expires_at: datetime) -> RefreshToken:
         refresh_token = RefreshToken(user_id=user_id, token_hash=token_hash, expires_at=expires_at)

@@ -2,17 +2,24 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import delete, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, update
 
 from app.models.task import Task, TaskStatus
+from app.repositories.base import BaseRepository
 
 
-class TaskRepository:
-    """Data access for Task. The only layer that talks SQLAlchemy for tasks."""
+class TaskRepository(BaseRepository[Task]):
+    """Data access for Task. The only layer that talks SQLAlchemy for tasks.
 
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
+    `get_by_id` (inherited from BaseRepository) is an *unscoped* lookup: no
+    project_id filter. It's used by the flat PATCH/DELETE /tasks/{id} routes
+    and by AttachmentService to discover which project a task belongs to, so
+    the caller can then verify project ownership itself (see get_for_project
+    / ProjectRepository.get_for_user). Callers needing an ownership-scoped
+    lookup must use get_for_project instead.
+    """
+
+    model = Task
 
     async def create(
         self,
@@ -47,15 +54,6 @@ class TaskRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_by_id(self, task_id: uuid.UUID) -> Task | None:
-        """Unscoped lookup (no project_id filter). Used by the flat
-        PATCH/DELETE /tasks/{id} routes to discover which project a task
-        belongs to, so the router/service can then verify project ownership
-        (see get_for_project / ProjectRepository.get_for_user).
-        """
-        result = await self._session.execute(select(Task).where(Task.id == task_id))
-        return result.scalar_one_or_none()
-
     async def update(self, task_id: uuid.UUID, **fields: Any) -> Task:
         # Core-style UPDATE (not ORM attribute assignment) + a fresh SELECT,
         # mirroring ProjectRepository.rename: mutating a loaded Task's
@@ -70,7 +68,3 @@ class TaskRepository:
             await self._session.flush()
         result = await self._session.execute(select(Task).where(Task.id == task_id))
         return result.scalar_one()
-
-    async def delete(self, task_id: uuid.UUID) -> None:
-        await self._session.execute(delete(Task).where(Task.id == task_id))
-        await self._session.flush()

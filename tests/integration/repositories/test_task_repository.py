@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -106,6 +107,33 @@ class TestTaskRepositoryGetForProject:
         task_in_b = await repo.create(project_id=project_b.id, title="B task")
 
         found = await repo.get_for_project(task_in_b.id, project_a.id)
+
+        assert found is None
+
+
+class TestTaskRepositoryGetById:
+    """get_by_id is inherited from BaseRepository and is intentionally
+    unscoped (no project_id filter) — see the class docstring on
+    TaskRepository for why callers rely on that.
+    """
+
+    async def test_get_by_id_returns_task_regardless_of_project(
+        self, db_session: AsyncSession
+    ) -> None:
+        project = await _make_project(db_session)
+        repo = TaskRepository(db_session)
+        task = await repo.create(project_id=project.id, title="Findable")
+
+        found = await repo.get_by_id(task.id)
+
+        assert found is not None
+        assert found.id == task.id
+        assert found.project_id == project.id
+
+    async def test_get_by_id_returns_none_when_not_found(self, db_session: AsyncSession) -> None:
+        repo = TaskRepository(db_session)
+
+        found = await repo.get_by_id(uuid.uuid4())
 
         assert found is None
 

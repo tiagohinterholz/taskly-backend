@@ -1,17 +1,16 @@
 import uuid
 
-from sqlalchemy import delete, func, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func, select, update
 
 from app.models.project import Project
 from app.models.task import Task
+from app.repositories.base import BaseRepository
 
 
-class ProjectRepository:
+class ProjectRepository(BaseRepository[Project]):
     """Data access for Project. The only layer that talks SQLAlchemy for projects."""
 
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
+    model = Project
 
     async def create(self, user_id: uuid.UUID, name: str) -> Project:
         project = Project(user_id=user_id, name=name)
@@ -36,10 +35,6 @@ class ProjectRepository:
         await self._session.flush()
         result = await self._session.execute(select(Project).where(Project.id == project_id))
         return result.scalar_one()
-
-    async def delete(self, project_id: uuid.UUID) -> None:
-        await self._session.execute(delete(Project).where(Project.id == project_id))
-        await self._session.flush()
 
     async def count_tasks(self, project_id: uuid.UUID) -> int:
         result = await self._session.execute(
