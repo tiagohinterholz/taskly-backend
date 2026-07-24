@@ -24,3 +24,14 @@ class LocalStorageBackend:
             target.unlink(missing_ok=True)
         except OSError as exc:
             raise StorageError(f"failed to delete {key!r} locally: {exc}") from exc
+
+    def get_url(self, key: str) -> str | None:
+        # No direct URL exists for a local file — callers must proxy via read().
+        return None
+
+    def read(self, key: str) -> bytes:
+        target = self._base_path / key
+        try:
+            return target.read_bytes()
+        except OSError as exc:
+            raise StorageError(f"failed to read {key!r} locally: {exc}") from exc

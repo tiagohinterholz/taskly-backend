@@ -23,6 +23,28 @@ class _FailingStorageBackend:
         raise StorageError("simulated storage outage")
 
 
+class _FakeS3StorageBackend:
+    """Fake StorageBackend mimicking an S3-backed configuration's direct-URL
+    behavior, for exercising the download route's redirect path without a
+    real S3 client.
+    """
+
+    def __init__(self, presigned_url: str) -> None:
+        self._presigned_url = presigned_url
+
+    def save(self, key: str, content: bytes, content_type: str) -> str:
+        return key
+
+    def delete(self, key: str) -> None:
+        pass
+
+    def get_url(self, key: str) -> str | None:
+        return self._presigned_url
+
+    def read(self, key: str) -> bytes:
+        raise AssertionError("read() must not be called when get_url() returns a URL")
+
+
 def _unique_email(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4()}@example.com"
 
@@ -55,6 +77,9 @@ class TestUploadAttachment:
         assert body["content_type"] == "text/plain"
         assert body["size_bytes"] == len(b"hello world")
         assert body["storage_key"]
+        # ATT-01: the response must include a dereferenceable URL, not just
+        # the internal storage_key — this API's own download endpoint.
+        assert body["url"] == f"/projects/{project_id}/tasks/{task_id}/attachments/{body['id']}/download"
         # The file was actually written through the storage backend.
         assert (tmp_path / body["storage_key"]).read_bytes() == b"hello world"
 
@@ -77,6 +102,9 @@ class TestUploadAttachment:
         assert listing.status_code == 200
         [task] = listing.json()
         assert [a["id"] for a in task["attachments"]] == [attachment_id]
+        assert task["attachments"][0]["url"] == (
+            f"/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}/download"
+        )
 
     async def test_upload_file_over_10mb_returns_413_without_saving(
         self, app: FastAPI, client: AsyncClient, tmp_path: Path
@@ -187,3 +215,102 @@ class TestDeleteAttachment:
         response = await client.delete(f"/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}")
 
         assert response.status_code == 502
+
+
+class TestDownloadAttachment:
+    async def test_download_with_local_backend_streams_file_content(
+        self, app: FastAPI, client: AsyncClient, tmp_path: Path
+    ) -> None:
+        app.dependency_overrides[get_storage_backend] = lambda: LocalStorageBackend(
+            base_path=str(tmp_path)
+        )
+        await register_and_login(client, _unique_email("att-download-local"))
+        project_id, task_id = await _create_task(client)
+        upload = await client.post(
+            f"/projects/{project_id}/tasks/{task_id}/attachments",
+            files={"file": ("notes.txt", b"hello world", "text/plain")},
+        )
+        download_url = upload.json()["url"]
+
+        response = await client.get(download_url)
+
+        assert response.status_code == 200
+        assert response.content == b"hello world"
+        assert response.headers["content-type"].startswith("text/plain")
+
+    async def test_download_with_s3_backend_redirects_to_presigned_url(
+        self, app: FastAPI, client: AsyncClient, tmp_path: Path
+    ) -> None:
+        app.dependency_overrides[get_storage_backend] = lambda: LocalStorageBackend(
+            base_path=str(tmp_path)
+        )
+        await register_and_login(client, _unique_email("att-download-s3"))
+        project_id, task_id = await _create_task(client)
+        upload = await client.post(
+            f"/projects/{project_id}/tasks/{task_id}/attachments",
+            files={"file": ("notes.txt", b"hello world", "text/plain")},
+        )
+        download_url = upload.json()["url"]
+        presigned_url = "https://taskly-attachments.s3.amazonaws.com/some-key?X-Amz-Signature=abc"
+        app.dependency_overrides[get_storage_backend] = lambda: _FakeS3StorageBackend(presigned_url)
+
+        response = await client.get(download_url)
+
+        assert response.status_code == 307
+        assert response.headers["location"] == presigned_url
+
+    async def test_download_nonexistent_attachment_returns_404(
+        self, app: FastAPI, client: AsyncClient, tmp_path: Path
+    ) -> None:
+        app.dependency_overrides[get_storage_backend] = lambda: LocalStorageBackend(
+            base_path=str(tmp_path)
+        )
+        await register_and_login(client, _unique_email("att-download-404"))
+        project_id, task_id = await _create_task(client)
+
+        response = await client.get(
+            f"/projects/{project_id}/tasks/{task_id}/attachments/{uuid.uuid4()}/download"
+        )
+
+        assert response.status_code == 404
+
+    async def test_download_for_other_users_attachment_returns_404(
+        self, app: FastAPI, client: AsyncClient, tmp_path: Path
+    ) -> None:
+        app.dependency_overrides[get_storage_backend] = lambda: LocalStorageBackend(
+            base_path=str(tmp_path)
+        )
+        await register_and_login(client, _unique_email("att-download-a"))
+        project_id, task_id = await _create_task(client, "A's project")
+        upload = await client.post(
+            f"/projects/{project_id}/tasks/{task_id}/attachments",
+            files={"file": ("notes.txt", b"hello", "text/plain")},
+        )
+        download_url = upload.json()["url"]
+        await client.post("/auth/logout")
+
+        await register_and_login(client, _unique_email("att-download-b"))
+        response = await client.get(download_url)
+
+        assert response.status_code == 404
+
+    async def test_download_for_attachment_of_a_different_task_returns_404(
+        self, app: FastAPI, client: AsyncClient, tmp_path: Path
+    ) -> None:
+        app.dependency_overrides[get_storage_backend] = lambda: LocalStorageBackend(
+            base_path=str(tmp_path)
+        )
+        await register_and_login(client, _unique_email("att-download-cross-task"))
+        project_id, task_id = await _create_task(client)
+        other_project_id, other_task_id = await _create_task(client, "Other project")
+        upload = await client.post(
+            f"/projects/{project_id}/tasks/{task_id}/attachments",
+            files={"file": ("notes.txt", b"hello", "text/plain")},
+        )
+        attachment_id = upload.json()["id"]
+
+        response = await client.get(
+            f"/projects/{other_project_id}/tasks/{other_task_id}/attachments/{attachment_id}/download"
+        )
+
+        assert response.status_code == 404

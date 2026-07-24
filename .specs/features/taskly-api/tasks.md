@@ -592,13 +592,13 @@ T16 → T17
 - Skill: NONE
 
 **Done when**:
-- [ ] `StorageBackend.get_url(key) -> str | None` adicionado ao protocolo: `S3StorageBackend` retorna presigned URL (expira em ~1h); `LocalStorageBackend` retorna `None` (não tem URL direta, precisa de proxy)
-- [ ] `StorageBackend.read(key) -> bytes` adicionado ao protocolo (usado quando `get_url` retorna `None`)
-- [ ] `AttachmentRepository.get_for_task(attachment_id, task_id) -> Attachment | None` adicionado (mesmo padrão de ownership de `get_for_project`)
-- [ ] Novo endpoint `GET /projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}/download`, protegido por ownership (mesma checagem de projeto+tarefa já estabelecida) — redireciona (307) pra presigned URL se `get_url` retornar algo, senão faz stream do conteúdo via `read()` com o `content_type` correto
-- [ ] `AttachmentOut` (schema de resposta) ganha campo `url` = esse endpoint de download (sempre esse formato, independente do backend de storage configurado — quem decide redirect vs. proxy é o endpoint, não o cliente)
-- [ ] Testes: `get_url`/`read` para as duas implementações de storage; endpoint de download com sucesso (local: stream; S3: redirect mockado), 404 pra anexo de outro usuário/projeto/tarefa
-- [ ] Gate check passa: `uv run pytest tests/unit tests/integration -q`
+- [x] `StorageBackend.get_url(key) -> str | None` adicionado ao protocolo: `S3StorageBackend` retorna presigned URL (expira em ~1h); `LocalStorageBackend` retorna `None` (não tem URL direta, precisa de proxy)
+- [x] `StorageBackend.read(key) -> bytes` adicionado ao protocolo (usado quando `get_url` retorna `None`)
+- [x] `AttachmentRepository.get_for_task(attachment_id, task_id) -> Attachment | None` adicionado (mesmo padrão de ownership de `get_for_project`)
+- [x] Novo endpoint `GET /projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}/download`, protegido por ownership (mesma checagem de projeto+tarefa já estabelecida) — redireciona (307) pra presigned URL se `get_url` retornar algo, senão faz stream do conteúdo via `read()` com o `content_type` correto
+- [x] `AttachmentOut` (schema de resposta) ganha campo `url` = esse endpoint de download (sempre esse formato, independente do backend de storage configurado — quem decide redirect vs. proxy é o endpoint, não o cliente)
+- [x] Testes: `get_url`/`read` para as duas implementações de storage; endpoint de download com sucesso (local: stream; S3: redirect mockado), 404 pra anexo de outro usuário/projeto/tarefa
+- [x] Gate check passa: `uv run pytest tests/unit tests/integration -q`
 
 **Tests**: unit (storage) + integration (endpoint)
 **Gate**: full

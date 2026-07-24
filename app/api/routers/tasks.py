@@ -3,7 +3,7 @@ from collections import defaultdict
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_user, get_db_session
@@ -48,14 +48,13 @@ class TaskUpdateRequest(BaseModel):
 
 
 class AttachmentOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: uuid.UUID
     filename: str
     storage_key: str
     content_type: str
     size_bytes: int
     created_at: datetime
+    url: str
 
 
 class TaskOut(BaseModel):
@@ -72,6 +71,23 @@ class TaskOut(BaseModel):
     attachments: list[AttachmentOut]
 
 
+def _to_attachment_out(attachment: Attachment, project_id: uuid.UUID) -> AttachmentOut:
+    """Builds the response DTO for a single attachment. `url` always points
+    at this API's own authenticated download endpoint (AD-016) — never a
+    raw storage reference — regardless of which storage backend is
+    configured; the download route itself decides redirect vs. proxy.
+    """
+    return AttachmentOut(
+        id=attachment.id,
+        filename=attachment.filename,
+        storage_key=attachment.storage_key,
+        content_type=attachment.content_type,
+        size_bytes=attachment.size_bytes,
+        created_at=attachment.created_at,
+        url=f"/projects/{project_id}/tasks/{attachment.task_id}/attachments/{attachment.id}/download",
+    )
+
+
 def _to_task_out(task: Task, attachments: list[Attachment]) -> TaskOut:
     return TaskOut(
         id=task.id,
@@ -84,7 +100,7 @@ def _to_task_out(task: Task, attachments: list[Attachment]) -> TaskOut:
         status=task.status,
         created_at=task.created_at,
         updated_at=task.updated_at,
-        attachments=[AttachmentOut.model_validate(a) for a in attachments],
+        attachments=[_to_attachment_out(a, task.project_id) for a in attachments],
     )
 
 

@@ -21,6 +21,19 @@ class StorageBackend(Protocol):
         """Remove the object stored under key."""
         ...
 
+    def get_url(self, key: str) -> str | None:
+        """Return a direct, time-limited URL to the object if the backend
+        supports one, or None if the backend requires proxying the content
+        through the API (e.g. local filesystem has no dereferenceable URL).
+        """
+        ...
+
+    def read(self, key: str) -> bytes:
+        """Return the raw content stored under key. Used by callers when
+        get_url() returns None and the content must be proxied.
+        """
+        ...
+
 
 def get_storage_backend() -> StorageBackend:
     """Select a StorageBackend implementation based on the STORAGE_BACKEND env var."""

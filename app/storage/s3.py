@@ -27,3 +27,20 @@ class S3StorageBackend:
             self._client.delete_object(Bucket=self._bucket, Key=key)
         except (BotoCoreError, ClientError) as exc:
             raise StorageError(f"failed to delete {key!r} from S3: {exc}") from exc
+
+    def get_url(self, key: str) -> str | None:
+        try:
+            return self._client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": self._bucket, "Key": key},
+                ExpiresIn=3600,
+            )
+        except (BotoCoreError, ClientError) as exc:
+            raise StorageError(f"failed to generate URL for {key!r} in S3: {exc}") from exc
+
+    def read(self, key: str) -> bytes:
+        try:
+            response = self._client.get_object(Bucket=self._bucket, Key=key)
+            return response["Body"].read()
+        except (BotoCoreError, ClientError) as exc:
+            raise StorageError(f"failed to read {key!r} from S3: {exc}") from exc

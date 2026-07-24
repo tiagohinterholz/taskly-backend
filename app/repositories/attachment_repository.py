@@ -30,6 +30,17 @@ class AttachmentRepository(BaseRepository[Attachment]):
         await self._session.flush()
         return attachment
 
+    async def get_for_task(self, attachment_id: uuid.UUID, task_id: uuid.UUID) -> Attachment | None:
+        """Ownership-scoped lookup: returns the attachment only if it
+        belongs to the given task_id, None otherwise — same shape as
+        TaskRepository.get_for_project, used by the download route to keep
+        a cross-task attachment_id from resolving (404, never leaked).
+        """
+        result = await self._session.execute(
+            select(Attachment).where(Attachment.id == attachment_id, Attachment.task_id == task_id)
+        )
+        return result.scalar_one_or_none()
+
     async def list_for_tasks(self, task_ids: list[uuid.UUID]) -> list[Attachment]:
         """Batch fetch: attachments for *all* given task ids in a single
         query. Task responses embed their attachments (per the frontend
