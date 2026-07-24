@@ -478,13 +478,13 @@ T16 → T17
 - Skill: NONE
 
 **Done when**:
-- [ ] E2E: criar só com título (201), sem título (422)
-- [ ] E2E: editar cada campo via PATCH, listar por projeto
-- [ ] E2E: todas as transições de status via API, incl. valor inválido (422)
-- [ ] E2E: tags válidas aceitas, tag >20 chars rejeitada (422)
-- [ ] E2E: usuário B recebe 404 ao acessar tarefa de projeto de A
-- [ ] Gate check passa: `uv run pytest tests/unit tests/integration -q`
-- [ ] Test count: 12+ testes e2e
+- [x] E2E: criar só com título (201), sem título (422)
+- [x] E2E: editar cada campo via PATCH, listar por projeto
+- [x] E2E: todas as transições de status via API, incl. valor inválido (422)
+- [x] E2E: tags válidas aceitas, tag >20 chars rejeitada (422)
+- [x] E2E: usuário B recebe 404 ao acessar tarefa de projeto de A
+- [x] Gate check passa: `uv run pytest tests/unit tests/integration -q`
+- [x] Test count: 12+ testes e2e
 
 **Tests**: integration
 **Gate**: full

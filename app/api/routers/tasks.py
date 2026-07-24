@@ -1,0 +1,205 @@
+import uuid
+from collections import defaultdict
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.dependencies import get_current_user, get_db_session
+from app.models.attachment import Attachment
+from app.models.task import Task, TaskStatus
+from app.models.user import User
+from app.repositories.attachment_repository import AttachmentRepository
+from app.repositories.project_repository import ProjectRepository
+from app.repositories.task_repository import TaskRepository
+from app.services.task_service import (
+    TagTooLongError,
+    TaskNotFoundError,
+    TaskService,
+    TaskTitleRequiredError,
+)
+
+router = APIRouter(tags=["tasks"])
+
+
+class TaskCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    short_description: str | None = None
+    full_description: str | None = None
+    due_at: datetime | None = None
+    tags: list[str] = Field(default_factory=list)
+
+
+class TaskUpdateRequest(BaseModel):
+    """All fields optional; only keys the client actually sent are applied
+    (see `.model_dump(exclude_unset=True)` in the PATCH handler) — so a task
+    can be updated one field at a time (TASK-02) without clobbering the rest.
+    """
+
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    short_description: str | None = None
+    full_description: str | None = None
+    due_at: datetime | None = None
+    tags: list[str] | None = None
+    status: TaskStatus | None = None
+
+
+class AttachmentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    filename: str
+    storage_key: str
+    content_type: str
+    size_bytes: int
+    created_at: datetime
+
+
+class TaskOut(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    title: str
+    short_description: str | None
+    full_description: str | None
+    due_at: datetime | None
+    tags: list[str]
+    status: TaskStatus
+    created_at: datetime
+    updated_at: datetime
+    attachments: list[AttachmentOut]
+
+
+def _to_task_out(task: Task, attachments: list[Attachment]) -> TaskOut:
+    return TaskOut(
+        id=task.id,
+        project_id=task.project_id,
+        title=task.title,
+        short_description=task.short_description,
+        full_description=task.full_description,
+        due_at=task.due_at,
+        tags=task.tags,
+        status=task.status,
+        created_at=task.created_at,
+        updated_at=task.updated_at,
+        attachments=[AttachmentOut.model_validate(a) for a in attachments],
+    )
+
+
+def _get_task_service(session: AsyncSession = Depends(get_db_session)) -> TaskService:
+    return TaskService(session=session, task_repository=TaskRepository(session))
+
+
+async def _get_owned_project_id(
+    project_id: uuid.UUID, user_id: uuid.UUID, session: AsyncSession
+) -> uuid.UUID:
+    project = await ProjectRepository(session).get_for_user(project_id, user_id)
+    if project is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="project not found")
+    return project.id
+
+
+async def _resolve_task_project_id(task_id: uuid.UUID, user_id: uuid.UUID, session: AsyncSession) -> uuid.UUID:
+    """Flat routes (PATCH/DELETE /tasks/{id}) don't carry project_id in the
+    URL, so it must be discovered first: look the task up unscoped, then
+    confirm the project it belongs to is owned by the current user. 404 in
+    both cases (unknown task, or task belonging to another user's project) —
+    never reveals which one to the caller (ISO-02).
+    """
+    task = await TaskRepository(session).get_by_id(task_id)
+    if task is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="task not found")
+    return await _get_owned_project_id(task.project_id, user_id, session)
+
+
+@router.post(
+    "/projects/{project_id}/tasks", response_model=TaskOut, status_code=status.HTTP_201_CREATED
+)
+async def create_task(
+    project_id: uuid.UUID,
+    payload: TaskCreateRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+    task_service: TaskService = Depends(_get_task_service),
+) -> TaskOut:
+    await _get_owned_project_id(project_id, user.id, session)
+    try:
+        task = await task_service.create(
+            project_id,
+            payload.title,
+            short_description=payload.short_description,
+            full_description=payload.full_description,
+            due_at=payload.due_at,
+            tags=payload.tags,
+        )
+    except TaskTitleRequiredError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="title is required") from exc
+    except TagTooLongError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"tag exceeds 20 characters: {exc.tag!r}",
+        ) from exc
+    # A brand-new task has no attachments yet; no query needed.
+    return _to_task_out(task, [])
+
+
+@router.get("/projects/{project_id}/tasks", response_model=list[TaskOut])
+async def list_tasks(
+    project_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+    task_service: TaskService = Depends(_get_task_service),
+) -> list[TaskOut]:
+    await _get_owned_project_id(project_id, user.id, session)
+    tasks = await task_service.list_for_project(project_id)
+
+    # Batch-fetch attachments for every returned task in a single query and
+    # group them in Python — avoids N+1 (one attachment query per task).
+    attachments = await AttachmentRepository(session).list_for_tasks([t.id for t in tasks])
+    attachments_by_task: dict[uuid.UUID, list[Attachment]] = defaultdict(list)
+    for attachment in attachments:
+        attachments_by_task[attachment.task_id].append(attachment)
+
+    return [_to_task_out(task, attachments_by_task.get(task.id, [])) for task in tasks]
+
+
+@router.patch("/tasks/{task_id}", response_model=TaskOut)
+async def update_task(
+    task_id: uuid.UUID,
+    payload: TaskUpdateRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+    task_service: TaskService = Depends(_get_task_service),
+) -> TaskOut:
+    project_id = await _resolve_task_project_id(task_id, user.id, session)
+    fields = payload.model_dump(exclude_unset=True)
+    try:
+        task = await task_service.update(project_id, task_id, **fields)
+    except TaskNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="task not found") from exc
+    except TaskTitleRequiredError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="title is required") from exc
+    except TagTooLongError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"tag exceeds 20 characters: {exc.tag!r}",
+        ) from exc
+
+    # Single task detail response: one attachments-by-task_id query (N=1),
+    # not the batched form above — there's only one task here.
+    attachments = await AttachmentRepository(session).list_for_tasks([task.id])
+    return _to_task_out(task, attachments)
+
+
+@router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_task(
+    task_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+    task_service: TaskService = Depends(_get_task_service),
+) -> None:
+    project_id = await _resolve_task_project_id(task_id, user.id, session)
+    try:
+        await task_service.delete(project_id, task_id)
+    except TaskNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="task not found") from exc
