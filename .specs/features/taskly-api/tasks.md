@@ -533,11 +533,11 @@ T16 → T17
 - Skill: NONE
 
 **Done when**:
-- [ ] `uv run uvicorn app.main:app` sobe com todos os routers montados
-- [ ] `GET /health` e `GET /docs` (OpenAPI) respondem 200
-- [ ] CORS testado: origem do frontend permitida com credentials, outras origens bloqueadas
-- [ ] Suíte completa passa: `uv run pytest -q`
-- [ ] `uv run pip-audit` limpo
+- [x] `uv run uvicorn app.main:app` sobe com todos os routers montados
+- [x] `GET /health` e `GET /docs` (OpenAPI) respondem 200
+- [x] CORS testado: origem do frontend permitida com credentials, outras origens bloqueadas
+- [x] Suíte completa passa: `uv run pytest -q`
+- [x] `uv run pip-audit` limpo
 
 **Tests**: none (smoke test de wiring incluso no gate)
 **Gate**: build
