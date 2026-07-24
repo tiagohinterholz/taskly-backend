@@ -122,15 +122,23 @@
 - **Date**: 2026-07-24
 - **Status**: active
 
+### AD-016
+- **Decision**: `AttachmentOut.url` sempre aponta pra um endpoint próprio da API (`GET .../attachments/{id}/download`, protegido por ownership), nunca uma URL de storage crua. O endpoint decide internamente: redirect (307) pra presigned URL se o backend for S3, ou proxy do conteúdo (`StorageBackend.read`) se for local.
+- **Reason**: Gap real encontrado durante a integração do frontend (T10) — `ATT-01` exige retornar "a URL/referência do anexo", mas a implementação original (T15) só devolvia `storage_key`, um identificador interno não-navegável. Isso passou pelos dois rounds do Verifier porque nenhum teste checava se a "referência" era de fato dereferenciável.
+- **Trade-off**: Endpoint de download precisa lidar com dois caminhos (redirect vs. proxy) em vez de um `url` estático simples; para local, o proxy consome banda do próprio servidor da API (aceitável no escopo do case).
+- **Scope**: Backend (contrato de resposta de anexos) + Frontend (consome a URL real em vez do workaround client-side de preview por sessão).
+- **Date**: 2026-07-24
+- **Status**: active
+
 ## Handoff
 
-- **Feature**: `backend/.specs/features/taskly-api` — ✅ **VERIFIED (PASS)** duas vezes (verificação original + re-verificação pós-refactor), feature encerrada
-- **Phase / Task**: Execute + Verify + rodada de revisão manual do usuário (README, deploy AWS, rotas aninhadas, `BaseRepository`, migração automática) + re-verificação final, todas concluídas
-- **Completed**: spec.md, design.md, tasks.md, validation.md (PASS, commit `8a75c02` — segunda rodada, foco em IDOR pós-refactor de rotas: 12/12 ACs, 3/3 mutações mortas incl. bypass de ownership), LESSONS.md/lessons.json (7 lições candidatas), README.md; 182 testes passando; `docker build` verificado (multi-stage, não-root, migração automática)
-- **In-progress**: nenhuma
-- **Next step**: Backend pronto e verificado duas vezes — inclusive pra deploy (AWS EC2 + S3 + Aurora, só variáveis de ambiente). Próximo passo do projeto Taskly é o **frontend** (`frontend/.specs/features/taskly-ui`) — Design e Tasks já foram feitos lá antes de começarmos o backend (contrato de rotas já atualizado em `design.md`); falta rodar o Execute do frontend seguindo o mesmo padrão (sub-agente por fase, Verifier ao final).
+- **Feature**: `backend/.specs/features/taskly-api` — ✅ **VERIFIED (PASS)** duas vezes; T19 (fix de URL de anexo) em andamento como correção pós-verificação adicional
+- **Phase / Task**: Execute + Verify + revisão manual do usuário + re-verificação, todas concluídas; T19 disparada pra fechar o gap de ATT-01 encontrado na integração com o frontend
+- **Completed**: spec.md, design.md, tasks.md, validation.md (PASS, commit `8a75c02`), LESSONS.md/lessons.json (7 lições candidatas), README.md; 182 testes passando (antes de T19); `docker build` verificado
+- **In-progress**: T19 (endpoint de download de anexo + `get_url`/`read` no `StorageBackend`)
+- **Next step**: Depois de T19 fechar (gate verde), atualizar o `AttachmentUploader.tsx` do frontend pra consumir a URL real em vez do workaround de `URL.createObjectURL` só-sessão. Considerar rodar o Verifier mais uma vez focado em ATT-01 dado que é uma mudança pós-verificação em área nova (endpoint novo).
 - **Blockers**: none
-- **Uncommitted files**: nenhum
+- **Uncommitted files**: `.specs/features/taskly-api/tasks.md`, `.specs/STATE.md` (T19 documentada nesta rodada)
 - **Branch**: master
-- **Gaps Minor não bloqueantes ainda abertos** (nenhum é regressão, nenhum bloqueia): (1) boundary de nome de projeto (1-100 chars) sem teste explícito — lição L-006; (2) cenário "project_id do atacante na URL + task_id de outro projeto" só coberto em teste de repository, não em teste e2e do router (a proteção em si está correta e comprovada por mutação, só falta duplicar a cobertura na camada de router) — lição L-007.
+- **Gaps Minor não bloqueantes ainda abertos** (nenhum é regressão, nenhum bloqueia): (1) boundary de nome de projeto (1-100 chars) sem teste explícito — lição L-006; (2) cenário "project_id do atacante na URL + task_id de outro projeto" só coberto em teste de repository, não em teste e2e do router — lição L-007; (3) `AttachmentOut` sem URL utilizável — lição a registrar após T19 fechar, sobre testar se uma "referência" é de fato dereferenciável quando o AC pede URL.
 - **Notas de ambiente**: Postgres de dev local em `localhost:5433`, container `backend-postgres-1` healthy. `bcrypt==4.0.1` fixado. `python-multipart==0.0.31`. N+1 de anexos resolvido via `AttachmentRepository.list_for_tasks` (batch). `Dockerfile` multi-stage + `entrypoint.sh` (migração automática) prontos. Rotas de task/anexo 100% aninhadas sob `/projects/{id}/tasks/{id}[/attachments/...]` (AD-013), ownership verificado uma vez por request via `ProjectRepository.get_for_user` + `TaskRepository.get_for_project` — confirmado sem regressão de IDOR pela re-verificação.

@@ -579,6 +579,34 @@ T16 → T17
 
 ---
 
+### T19: Fix — anexo não tinha URL de download utilizável (gap de ATT-01)
+
+**What**: `ATT-01` (`spec.md`) exige que o upload "retorne a URL/referência do anexo", mas a implementação (T15) só retornava `storage_key` — um identificador interno, não uma URL navegável/dereferenciável. Descoberto durante a integração do frontend (T10), que precisou de um workaround client-side (preview só na sessão local) por falta de URL persistente. Corrigido antes do frontend depender permanentemente do workaround.
+**Where**: `app/storage/backend.py` (protocolo), `app/storage/local.py`, `app/storage/s3.py`, `app/repositories/attachment_repository.py`, `app/api/routers/attachments.py`, `app/services/attachment_service.py`
+**Depends on**: T17 (roda depois de tudo, é um fix pós-verificação)
+**Reuses**: `StorageBackend`, `AttachmentRepository`, padrão de ownership de `TaskRepository.get_for_project`
+**Requirement**: ATT-01
+
+**Tools**:
+- MCP: NONE
+- Skill: NONE
+
+**Done when**:
+- [ ] `StorageBackend.get_url(key) -> str | None` adicionado ao protocolo: `S3StorageBackend` retorna presigned URL (expira em ~1h); `LocalStorageBackend` retorna `None` (não tem URL direta, precisa de proxy)
+- [ ] `StorageBackend.read(key) -> bytes` adicionado ao protocolo (usado quando `get_url` retorna `None`)
+- [ ] `AttachmentRepository.get_for_task(attachment_id, task_id) -> Attachment | None` adicionado (mesmo padrão de ownership de `get_for_project`)
+- [ ] Novo endpoint `GET /projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}/download`, protegido por ownership (mesma checagem de projeto+tarefa já estabelecida) — redireciona (307) pra presigned URL se `get_url` retornar algo, senão faz stream do conteúdo via `read()` com o `content_type` correto
+- [ ] `AttachmentOut` (schema de resposta) ganha campo `url` = esse endpoint de download (sempre esse formato, independente do backend de storage configurado — quem decide redirect vs. proxy é o endpoint, não o cliente)
+- [ ] Testes: `get_url`/`read` para as duas implementações de storage; endpoint de download com sucesso (local: stream; S3: redirect mockado), 404 pra anexo de outro usuário/projeto/tarefa
+- [ ] Gate check passa: `uv run pytest tests/unit tests/integration -q`
+
+**Tests**: unit (storage) + integration (endpoint)
+**Gate**: full
+
+**Commit**: `fix(attachments): add authenticated download URL to satisfy ATT-01`
+
+---
+
 ## Parallel Execution Map
 
 ```
