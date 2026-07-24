@@ -90,14 +90,22 @@
 - **Date**: 2026-07-23
 - **Status**: active
 
+### AD-012
+- **Decision**: Verificação de ownership (o recurso pertence ao usuário autenticado) acontece na camada de **service** via lookups escopados por `user_id`/`project_id` (`ProjectRepository.get_for_user`, `TaskRepository.get_for_project`), levantando exceções de domínio (`ProjectNotFoundError`, `TaskNotFoundError`) — nunca deixada implícita ou reimplementada em cada router.
+- **Reason**: Revisão pós-Fase 4 encontrou que `ProjectService.rename`/`delete` recebiam `user_id` sem usá-lo (parâmetro morto) e `TaskService` nem recebia contexto de ownership — uma brecha de IDOR real (qualquer usuário autenticado podia mutar recurso de outro usuário sabendo o UUID). Corrigido via T18 antes da Fase 5 (routers), alinhando com o que `design.md` já dizia na Error Handling Strategy.
+- **Trade-off**: `TaskService.update`/`delete` ganharam `project_id` como parâmetro obrigatório (mudança de assinatura pós-Fase-4, sem impacto externo pois routers ainda não existiam).
+- **Scope**: Backend (routers T10/T13 devem usar essas checagens, não reimplementar ownership por conta própria).
+- **Date**: 2026-07-23
+- **Status**: active
+
 ## Handoff
 
 - **Feature**: `backend/.specs/features/taskly-api`
-- **Phase / Task**: Execute em andamento — Fases 1, 2 e 3 concluídas (T1, T2, T3, T4, T14, T5, T8, T11), Fase 4 prestes a ser disparada (T6, T9, T12 em paralelo — services)
-- **Completed**: spec.md, design.md, tasks.md; T1 (`48b9f28`), T2 (`619952b`), T3 (`8ff4b88`), docs (`7e4d50b`), T4 (`ae3dc50`), T14 (`996d2ae`), T5 (`d8d8228`), T8 (`bafb7bc`), T11 (`61fe594`) — 36 testes passando (13 unit + 23 integration)
-- **In-progress**: nenhuma task em execução no momento; prestes a disparar Fase 4
-- **Next step**: Disparar sub-agente da Fase 4 (`AuthService` T6, `ProjectService` T9, `TaskService` T12 — todos unit test, repository mockado, podem rodar em paralelo dentro do mesmo worker)
+- **Phase / Task**: Execute em andamento — Fases 1-3 concluídas + Fase 4 (T6, T9, T12) concluída; T18 (fix de ownership, ISO-02) adicionada ao plano e prestes a ser disparada antes da Fase 5
+- **Completed**: spec.md, design.md, tasks.md (18 tasks); commits até `83e9587` (T12) — 62 testes passando
+- **In-progress**: nenhuma task em execução; prestes a disparar T18
+- **Next step**: Disparar agente para T18 (fix de ownership em Project/Task repository+service), depois seguir pra Fase 5 (T7 → T10 → T13 → T15, routers)
 - **Blockers**: none
-- **Uncommitted files**: `.specs/STATE.md` (esta atualização, a ser commitada agora)
+- **Uncommitted files**: `.specs/features/taskly-api/tasks.md`, `.specs/STATE.md` (esta rodada, a commitar agora)
 - **Branch**: master
-- **Notas de ambiente**: Postgres de dev local em `localhost:5433`, container `backend-postgres-1` healthy, mantido entre fases. `bcrypt==4.0.1` fixado por incompatibilidade com o backend bcrypt do `passlib`. `pytest-asyncio==1.4.0` adicionado (já previsto em design.md) com `asyncio_mode`/`asyncio_default_fixture_loop_scope`/`asyncio_default_test_loop_scope = "session"` em `pyproject.toml`, e `tests/conftest.py` carrega `.env` antes de `app.core.db` ser importado. Fixture `db_session` em `tests/integration/conftest.py` (truncate-all-tables após cada teste) — reutilizar em T7/T10/T13/T15.
+- **Notas de ambiente**: Postgres de dev local em `localhost:5433`, container `backend-postgres-1` healthy, mantido entre fases. `bcrypt==4.0.1` fixado por incompatibilidade com `passlib`. `pytest-asyncio` configurado com `tests/conftest.py` carregando `.env` antes de `app.core.db`. Fixture `db_session` em `tests/integration/conftest.py` (truncate-all-tables) — reutilizar em T7/T10/T13/T15. Exceções de domínio já existentes para os routers mapearem: `EmailAlreadyRegisteredError`→409, `InvalidCredentialsError`→401, `InvalidRefreshTokenError`→401, `RateLimitExceededError`→429, `ProjectHasTasksError`→409, `TaskTitleRequiredError`→422, `TagTooLongError`→422 (expõe `.tag`), e agora (via T18) `ProjectNotFoundError`→404, `TaskNotFoundError`→404.

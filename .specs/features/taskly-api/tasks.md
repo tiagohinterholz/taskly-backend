@@ -67,12 +67,12 @@ T1 ──┬→ T4  [P]
 T3 → T5 → T8 → T11
 ```
 
-### Phase 4: Services (Parallel OK — unit tests, repository mockado)
+### Phase 4: Services (Parallel OK — unit tests, repository mockado) + fix de ownership
 
 ```
         ┌→ T6  [P]  (depende de T4, T5)
-T5,T8,T11┼→ T9  [P]  (depende de T8)
-        └→ T12 [P]  (depende de T11)
+T5,T8,T11┼→ T9  [P]  (depende de T8)  ─┐
+        └→ T12 [P]  (depende de T11) ─┴→ T18 (fix ISO-02, depende de T9 e T12)
 ```
 
 ### Phase 5: Routers (Sequential — banco de teste compartilhado)
@@ -382,6 +382,35 @@ T16 → T17
 
 ---
 
+### T18: Fix — enforce ownership checks in Project/Task services (closes ISO-02 gap)
+
+**What**: `design.md`'s Error Handling Strategy states "Service filtra por `user_id` na query → 404" for ISO-02, but the Phase 4 implementation of `ProjectService.rename`/`delete` accepts `user_id` without using it (dead parameter), and `TaskService` doesn't accept ownership context at all. This is a real IDOR gap — found during review of Phase 4's output, before Phase 5 routers get built on top of it. Add ownership-scoped repository lookups and use them in the services, so a 404-on-cross-user-access can be raised at the service layer rather than improvised per-router.
+**Where**: `app/repositories/project_repository.py`, `app/repositories/task_repository.py`, `app/services/project_service.py`, `app/services/task_service.py`
+**Depends on**: T9, T12 (modifies their output)
+**Reuses**: existing `ProjectRepository`/`TaskRepository`/`ProjectService`/`TaskService` from T8/T9/T11/T12
+**Requirement**: ISO-02
+
+**Tools**:
+- MCP: NONE
+- Skill: NONE
+
+**Done when**:
+- [ ] `ProjectRepository.get_for_user(project_id, user_id) -> Project | None` added and unit/integration tested (returns `None` for another user's project)
+- [ ] `ProjectService.rename`/`delete` call `get_for_user` first and raise a new `ProjectNotFoundError` when `None` (before renaming/deleting) — router (T10) maps this to 404
+- [ ] `TaskRepository.get_for_project(task_id, project_id) -> Task | None` added and tested (returns `None` when the task belongs to a different project)
+- [ ] `TaskService.update`/`delete` gain a required `project_id` parameter, call `get_for_project` first, and raise a new `TaskNotFoundError` when `None`/mismatched — router (T13) maps this to 404 (combined with the router's own project-ownership check via `ProjectService.get_for_user`, since task ownership is transitive through project ownership)
+- [ ] Existing T9/T12 tests updated only where the signature change requires it (call sites), without weakening any existing assertion
+- [ ] New tests added: rename/delete blocked for non-owner (service-level, mocked repo returning `None`), task update/delete blocked when task's project doesn't match
+- [ ] Gate check passes: `uv run pytest tests/unit tests/integration -q`
+- [ ] Test count: existing counts unchanged or increased, never decreased
+
+**Tests**: unit (services) + integration (new repository methods)
+**Gate**: full
+
+**Commit**: `fix(security): enforce project and task ownership checks before mutation (ISO-02)`
+
+---
+
 ### T7: Auth router + `get_current_user`
 
 **What**: Endpoints `/auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout` e a dependency `get_current_user` usada por todos os routers protegidos.
@@ -414,8 +443,8 @@ T16 → T17
 
 **What**: Endpoints `POST/GET /projects`, `PATCH/DELETE /projects/{id}`.
 **Where**: `app/api/routers/projects.py`
-**Depends on**: T9, T7
-**Reuses**: `ProjectService` (T9), `get_current_user` (T7)
+**Depends on**: T9, T7, T18
+**Reuses**: `ProjectService` (T9, ownership-checked per T18), `get_current_user` (T7)
 **Requirement**: PROJ-01..04, ISO-02
 
 **Tools**:
@@ -440,8 +469,8 @@ T16 → T17
 
 **What**: Endpoints `POST/GET /projects/{id}/tasks`, `PATCH/DELETE /tasks/{id}`.
 **Where**: `app/api/routers/tasks.py`
-**Depends on**: T12, T10
-**Reuses**: `TaskService` (T12), `get_current_user` (T7), padrão de ownership do `projects.py` (T10)
+**Depends on**: T12, T10, T18
+**Reuses**: `TaskService` (T12, ownership-checked per T18), `get_current_user` (T7), padrão de ownership do `projects.py` (T10)
 **Requirement**: TASK-01..04, STAT-01, TAG-01, TAG-02
 
 **Tools**:
@@ -564,9 +593,11 @@ Phase 4 (Parallel — unit tests, mocked repos):
     ├── T6  [P]
     ├── T9  [P]
     └── T12 [P]
+  T9,T12 complete, then:
+    T18 (fix ownership gap — sequential, modifies T9/T12 output)
 
 Phase 5 (Sequential — shared test DB):
-  T6,T9,T12 complete, then:
+  T6,T18 complete, then:
     T7 → T10 → T13 → T15
 
 Phase 6 (Sequential):
@@ -600,6 +631,7 @@ Phase 7 (Sequential):
 | T6: AuthService | 1 service | ✅ Granular |
 | T9: ProjectService | 1 service | ✅ Granular |
 | T12: TaskService | 1 service | ✅ Granular |
+| T18: Fix ownership (Project+Task) | 2 repositories + 2 services, coesos (mesma correção transversal) | ✅ Granular (coeso — um único fix de segurança) |
 | T7: Auth router + dependency | 1 router + 1 dependency coesos (auth) | ✅ Granular |
 | T10: Project router | 1 router | ✅ Granular |
 | T13: Task router | 1 router | ✅ Granular |
@@ -624,9 +656,10 @@ Phase 7 (Sequential):
 | T6 | T4, T5 | T4,T5,T8,T11,T14 → T6 | ✅ Match |
 | T9 | T8 | T4,T5,T8,T11,T14 → T9 | ✅ Match |
 | T12 | T11 | T4,T5,T8,T11,T14 → T12 | ✅ Match |
+| T18 | T9, T12 | T9,T12 → T18 | ✅ Match |
 | T7 | T6 | T6 → T7 | ✅ Match |
-| T10 | T9, T7 | T7 → T10 (e depende de T9, completo na fase anterior) | ✅ Match |
-| T13 | T12, T10 | T10 → T13 (e depende de T12, completo na fase anterior) | ✅ Match |
+| T10 | T9, T7, T18 | T7 → T10 (e depende de T9/T18, completos na fase anterior) | ✅ Match |
+| T13 | T12, T10, T18 | T10 → T13 (e depende de T12/T18, completos na fase anterior) | ✅ Match |
 | T15 | T14, T13 | T13 → T15 (e depende de T14, completo na fase 2) | ✅ Match |
 | T16 | T7, T10, T13, T15 | T7,T10,T13,T15 → T16 | ✅ Match |
 | T17 | T16 | T16 → T17 | ✅ Match |
@@ -648,6 +681,7 @@ Phase 7 (Sequential):
 | T6: AuthService | service | unit | unit | ✅ OK |
 | T9: ProjectService | service | unit | unit | ✅ OK |
 | T12: TaskService | service | unit | unit | ✅ OK |
+| T18: Fix ownership | service (highest) + repository | unit + integration | unit + integration | ✅ OK |
 | T7: Auth router | router (highest layer touched) | integration | integration | ✅ OK |
 | T10: Project router | router | integration | integration | ✅ OK |
 | T13: Task router | router | integration | integration | ✅ OK |
