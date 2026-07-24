@@ -100,12 +100,13 @@
 
 ## Handoff
 
-- **Feature**: `backend/.specs/features/taskly-api`
-- **Phase / Task**: Execute em andamento — Fases 1-6 concluídas (todos os routers + wiring final); Fase 7 (T17, Dockerfile) é o próximo passo
-- **Completed**: spec.md, design.md, tasks.md (18 tasks); commits até `b814e04` (T16) — 156 testes passando
-- **In-progress**: nenhuma task em execução
-- **Next step**: Disparar agente para T17 (Dockerfile multi-stage, usuário não-root `appuser`, `.dockerignore`)
+- **Feature**: `backend/.specs/features/taskly-api` — ✅ **VERIFIED (PASS)**, feature encerrada
+- **Phase / Task**: Execute concluído — 18 tasks (T1-T18) em 7 fases + Verifier com 1 rodada de fix (5 gaps, 1 era bug real de anexos órfãos) + re-verificação PASS (34/34 ACs, 5/5 mutações mortas)
+- **Completed**: spec.md, design.md, tasks.md, validation.md (PASS, commit `954d17b`), LESSONS.md/lessons.json (6 lições candidatas); 175 testes passando; `docker build` verificado (multi-stage, não-root)
+- **In-progress**: nenhuma
+- **Next step**: Backend pronto. Próximo passo do projeto Taskly é o **frontend** (`frontend/.specs/features/taskly-ui`) — Design e Tasks já foram feitos lá antes de começarmos o backend; falta rodar o Execute do frontend seguindo o mesmo padrão (sub-agente por fase, Verifier ao final). Lições deste backend (`backend/.specs/lessons.json`) são um store separado do frontend (`frontend/.specs/lessons.json` ainda não existe) — não carregam automaticamente lá, mas os padrões valem como guia manual: testar boundary de campos, testar flags de segurança de cookie via header cru, testar todas as rotas protegidas explicitamente, limpar recursos externos ao deletar entidade pai.
 - **Blockers**: none
 - **Uncommitted files**: nenhum
 - **Branch**: master
-- **Notas de ambiente**: Postgres de dev local em `localhost:5433`, container `backend-postgres-1` healthy. `bcrypt==4.0.1` fixado. `httpx` + `python-multipart` adicionados como deps (T7/T15); `python-multipart` bumped `0.0.20 → 0.0.31` em T16 (6 CVEs conhecidos corrigidos — `pip-audit` estava sujo antes do bump, exigido pelo próprio Done-when de T16). N+1 de anexos resolvido via `AttachmentRepository.list_for_tasks` (batch, com teste de regressão de contagem de query) — reutilizar esse padrão se novas listagens agregadas surgirem. `AuthService` continua reconstruído por request no router (`_get_auth_service`), sem refactor de DI em T16; o rate-limit dict compartilhado via módulo (`_shared_failed_attempts`) foi preservado intacto e o teste de 429 (AUTH-05) segue verde. `app/main.py` agora monta os 4 routers + `CORSMiddleware` (origem via env `CORS_ORIGIN`, default `http://localhost:5173`, `allow_credentials=True`); nenhum `app/core/config.py` foi criado — env vars continuam lidas inline (`os.environ`/`os.environ.get`) como já era o padrão em `auth.py`/`dependencies.py`/`db.py`.
+- **Gap Minor não bloqueante ainda aberto**: boundary de nome de projeto (1-100 chars) sem teste explícito em `tests/integration/api/test_projects_router.py` — registrado como lição (L-006), não é regressão, pode ser fechado depois se sobrar tempo.
+- **Notas de ambiente**: Postgres de dev local em `localhost:5433`, container `backend-postgres-1` healthy (deixar rodando ou subir de novo com `docker compose up -d` se for parar). `bcrypt==4.0.1` fixado. `python-multipart==0.0.31`. N+1 de anexos resolvido via `AttachmentRepository.list_for_tasks` (batch). `Dockerfile` multi-stage pronto em `Dockerfile`/`.dockerignore`.
