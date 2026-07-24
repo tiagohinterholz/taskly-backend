@@ -175,10 +175,14 @@ class TestUpdateTask:
         project_id = await _create_project(client)
         created = await client.post(f"/projects/{project_id}/tasks", json={"title": "T"})
         task_id = created.json()["id"]
+        too_long_tag = "a" * 21
 
-        response = await client.patch(f"/tasks/{task_id}", json={"tags": ["a" * 21]})
+        response = await client.patch(f"/tasks/{task_id}", json={"tags": ["urgent", too_long_tag]})
 
         assert response.status_code == 422
+        # TAG-02 requires the 422 to indicate *which* tag exceeded the
+        # limit, not just that some tag did.
+        assert too_long_tag in response.json()["detail"]
 
     async def test_update_with_empty_title_returns_422(self, client: AsyncClient) -> None:
         await register_and_login(client, _unique_email("task-upd-empty-title"))
