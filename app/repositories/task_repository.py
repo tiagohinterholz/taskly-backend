@@ -12,11 +12,11 @@ class TaskRepository(BaseRepository[Task]):
     """Data access for Task. The only layer that talks SQLAlchemy for tasks.
 
     `get_by_id` (inherited from BaseRepository) is an *unscoped* lookup: no
-    project_id filter. It's used by the flat PATCH/DELETE /tasks/{id} routes
-    and by AttachmentService to discover which project a task belongs to, so
-    the caller can then verify project ownership itself (see get_for_project
-    / ProjectRepository.get_for_user). Callers needing an ownership-scoped
-    lookup must use get_for_project instead.
+    project_id filter. Every task/attachment route is now nested under
+    /projects/{project_id}/..., so callers verifying a task belongs to a
+    specific project use `get_for_project` instead — `get_by_id` currently
+    has no caller in this codebase but is kept as generic inherited
+    capability (other repositories still use it).
     """
 
     model = Task

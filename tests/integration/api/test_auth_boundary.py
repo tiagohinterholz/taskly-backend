@@ -4,6 +4,7 @@ import pytest
 from httpx import AsyncClient
 
 _RANDOM_ID = uuid.uuid4()
+_RANDOM_PROJECT_ID = uuid.uuid4()
 
 # ISO-01: "WHEN uma requisição a qualquer endpoint de projeto/tarefa não
 # possui sessão válida THEN o sistema SHALL retornar 401." Every protected
@@ -19,14 +20,22 @@ _PROTECTED_ROUTES: list[tuple[str, str, dict]] = [
     ("DELETE", f"/projects/{_RANDOM_ID}", {}),
     ("GET", f"/projects/{_RANDOM_ID}/tasks", {}),
     ("POST", f"/projects/{_RANDOM_ID}/tasks", {"json": {"title": "Unauthorized task"}}),
-    ("PATCH", f"/tasks/{_RANDOM_ID}", {"json": {"title": "Hijack"}}),
-    ("DELETE", f"/tasks/{_RANDOM_ID}", {}),
+    (
+        "PATCH",
+        f"/projects/{_RANDOM_PROJECT_ID}/tasks/{_RANDOM_ID}",
+        {"json": {"title": "Hijack"}},
+    ),
+    ("DELETE", f"/projects/{_RANDOM_PROJECT_ID}/tasks/{_RANDOM_ID}", {}),
     (
         "POST",
-        f"/tasks/{_RANDOM_ID}/attachments",
+        f"/projects/{_RANDOM_PROJECT_ID}/tasks/{_RANDOM_ID}/attachments",
         {"files": {"file": ("notes.txt", b"hello", "text/plain")}},
     ),
-    ("DELETE", f"/tasks/{_RANDOM_ID}/attachments/{uuid.uuid4()}", {}),
+    (
+        "DELETE",
+        f"/projects/{_RANDOM_PROJECT_ID}/tasks/{_RANDOM_ID}/attachments/{uuid.uuid4()}",
+        {},
+    ),
 ]
 
 

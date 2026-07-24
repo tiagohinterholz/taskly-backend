@@ -42,10 +42,10 @@ class TestUploadAttachment:
             base_path=str(tmp_path)
         )
         await register_and_login(client, _unique_email("att-upload-ok"))
-        _, task_id = await _create_task(client)
+        project_id, task_id = await _create_task(client)
 
         response = await client.post(
-            f"/tasks/{task_id}/attachments",
+            f"/projects/{project_id}/tasks/{task_id}/attachments",
             files={"file": ("notes.txt", b"hello world", "text/plain")},
         )
 
@@ -67,7 +67,7 @@ class TestUploadAttachment:
         await register_and_login(client, _unique_email("att-embed"))
         project_id, task_id = await _create_task(client)
         upload = await client.post(
-            f"/tasks/{task_id}/attachments",
+            f"/projects/{project_id}/tasks/{task_id}/attachments",
             files={"file": ("photo.png", b"binary-data", "image/png")},
         )
         attachment_id = upload.json()["id"]
@@ -89,7 +89,7 @@ class TestUploadAttachment:
         oversized = b"x" * (_TEN_MB + 1)
 
         response = await client.post(
-            f"/tasks/{task_id}/attachments",
+            f"/projects/{project_id}/tasks/{task_id}/attachments",
             files={"file": ("huge.bin", oversized, "application/octet-stream")},
         )
 
@@ -101,12 +101,12 @@ class TestUploadAttachment:
 
     async def test_upload_for_other_users_task_returns_404(self, client: AsyncClient) -> None:
         await register_and_login(client, _unique_email("att-upload-a"))
-        _, task_id = await _create_task(client, "A's project")
+        project_id, task_id = await _create_task(client, "A's project")
         await client.post("/auth/logout")
 
         await register_and_login(client, _unique_email("att-upload-b"))
         response = await client.post(
-            f"/tasks/{task_id}/attachments",
+            f"/projects/{project_id}/tasks/{task_id}/attachments",
             files={"file": ("notes.txt", b"hello", "text/plain")},
         )
 
@@ -120,7 +120,7 @@ class TestUploadAttachment:
         project_id, task_id = await _create_task(client)
 
         response = await client.post(
-            f"/tasks/{task_id}/attachments",
+            f"/projects/{project_id}/tasks/{task_id}/attachments",
             files={"file": ("notes.txt", b"hello", "text/plain")},
         )
 
@@ -142,13 +142,13 @@ class TestDeleteAttachment:
         await register_and_login(client, _unique_email("att-delete"))
         project_id, task_id = await _create_task(client)
         upload = await client.post(
-            f"/tasks/{task_id}/attachments",
+            f"/projects/{project_id}/tasks/{task_id}/attachments",
             files={"file": ("notes.txt", b"hello", "text/plain")},
         )
         attachment_id = upload.json()["id"]
         storage_key = upload.json()["storage_key"]
 
-        response = await client.delete(f"/tasks/{task_id}/attachments/{attachment_id}")
+        response = await client.delete(f"/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}")
 
         assert response.status_code == 204
         assert not (tmp_path / storage_key).exists()
@@ -163,9 +163,9 @@ class TestDeleteAttachment:
             base_path=str(tmp_path)
         )
         await register_and_login(client, _unique_email("att-delete-404"))
-        _, task_id = await _create_task(client)
+        project_id, task_id = await _create_task(client)
 
-        response = await client.delete(f"/tasks/{task_id}/attachments/{uuid.uuid4()}")
+        response = await client.delete(f"/projects/{project_id}/tasks/{task_id}/attachments/{uuid.uuid4()}")
 
         assert response.status_code == 404
 
@@ -176,14 +176,14 @@ class TestDeleteAttachment:
             base_path=str(tmp_path)
         )
         await register_and_login(client, _unique_email("att-delete-fail"))
-        _, task_id = await _create_task(client)
+        project_id, task_id = await _create_task(client)
         upload = await client.post(
-            f"/tasks/{task_id}/attachments",
+            f"/projects/{project_id}/tasks/{task_id}/attachments",
             files={"file": ("notes.txt", b"hello", "text/plain")},
         )
         attachment_id = upload.json()["id"]
 
         app.dependency_overrides[get_storage_backend] = lambda: _FailingStorageBackend()
-        response = await client.delete(f"/tasks/{task_id}/attachments/{attachment_id}")
+        response = await client.delete(f"/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}")
 
         assert response.status_code == 502

@@ -103,23 +103,15 @@ def _get_task_service(
 async def _get_owned_project_id(
     project_id: uuid.UUID, user_id: uuid.UUID, session: AsyncSession
 ) -> uuid.UUID:
+    """Every task/attachment route is nested under /projects/{project_id}/...,
+    so project_id is always available straight from the URL. This verifies
+    it belongs to the current user (404 otherwise, ISO-02) once per request,
+    before any task-level work happens.
+    """
     project = await ProjectRepository(session).get_for_user(project_id, user_id)
     if project is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="project not found")
     return project.id
-
-
-async def _resolve_task_project_id(task_id: uuid.UUID, user_id: uuid.UUID, session: AsyncSession) -> uuid.UUID:
-    """Flat routes (PATCH/DELETE /tasks/{id}) don't carry project_id in the
-    URL, so it must be discovered first: look the task up unscoped, then
-    confirm the project it belongs to is owned by the current user. 404 in
-    both cases (unknown task, or task belonging to another user's project) —
-    never reveals which one to the caller (ISO-02).
-    """
-    task = await TaskRepository(session).get_by_id(task_id)
-    if task is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="task not found")
-    return await _get_owned_project_id(task.project_id, user_id, session)
 
 
 @router.post(
@@ -173,15 +165,16 @@ async def list_tasks(
     return [_to_task_out(task, attachments_by_task.get(task.id, [])) for task in tasks]
 
 
-@router.patch("/tasks/{task_id}", response_model=TaskOut)
+@router.patch("/projects/{project_id}/tasks/{task_id}", response_model=TaskOut)
 async def update_task(
+    project_id: uuid.UUID,
     task_id: uuid.UUID,
     payload: TaskUpdateRequest,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
     task_service: TaskService = Depends(_get_task_service),
 ) -> TaskOut:
-    project_id = await _resolve_task_project_id(task_id, user.id, session)
+    await _get_owned_project_id(project_id, user.id, session)
     fields = payload.model_dump(exclude_unset=True)
     try:
         task = await task_service.update(project_id, task_id, **fields)
@@ -201,14 +194,15 @@ async def update_task(
     return _to_task_out(task, attachments)
 
 
-@router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/projects/{project_id}/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_task(
+    project_id: uuid.UUID,
     task_id: uuid.UUID,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
     task_service: TaskService = Depends(_get_task_service),
 ) -> None:
-    project_id = await _resolve_task_project_id(task_id, user.id, session)
+    await _get_owned_project_id(project_id, user.id, session)
     try:
         await task_service.delete(project_id, task_id)
     except TaskNotFoundError as exc:

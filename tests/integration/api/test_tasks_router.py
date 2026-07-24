@@ -115,7 +115,7 @@ class TestUpdateTask:
         created = await client.post(f"/projects/{project_id}/tasks", json={"title": "Original"})
         task_id = created.json()["id"]
 
-        response = await client.patch(f"/tasks/{task_id}", json={"title": "Updated"})
+        response = await client.patch(f"/projects/{project_id}/tasks/{task_id}", json={"title": "Updated"})
 
         assert response.status_code == 200
         assert response.json()["title"] == "Updated"
@@ -127,7 +127,7 @@ class TestUpdateTask:
         task_id = created.json()["id"]
 
         response = await client.patch(
-            f"/tasks/{task_id}", json={"short_description": "A short summary"}
+            f"/projects/{project_id}/tasks/{task_id}", json={"short_description": "A short summary"}
         )
 
         assert response.status_code == 200
@@ -140,7 +140,7 @@ class TestUpdateTask:
         task_id = created.json()["id"]
 
         response = await client.patch(
-            f"/tasks/{task_id}", json={"full_description": "A much longer description"}
+            f"/projects/{project_id}/tasks/{task_id}", json={"full_description": "A much longer description"}
         )
 
         assert response.status_code == 200
@@ -153,7 +153,7 @@ class TestUpdateTask:
         task_id = created.json()["id"]
 
         response = await client.patch(
-            f"/tasks/{task_id}", json={"due_at": "2026-08-01T12:00:00Z"}
+            f"/projects/{project_id}/tasks/{task_id}", json={"due_at": "2026-08-01T12:00:00Z"}
         )
 
         assert response.status_code == 200
@@ -165,7 +165,7 @@ class TestUpdateTask:
         created = await client.post(f"/projects/{project_id}/tasks", json={"title": "T"})
         task_id = created.json()["id"]
 
-        response = await client.patch(f"/tasks/{task_id}", json={"tags": ["urgent", "backend"]})
+        response = await client.patch(f"/projects/{project_id}/tasks/{task_id}", json={"tags": ["urgent", "backend"]})
 
         assert response.status_code == 200
         assert response.json()["tags"] == ["urgent", "backend"]
@@ -177,7 +177,7 @@ class TestUpdateTask:
         task_id = created.json()["id"]
         too_long_tag = "a" * 21
 
-        response = await client.patch(f"/tasks/{task_id}", json={"tags": ["urgent", too_long_tag]})
+        response = await client.patch(f"/projects/{project_id}/tasks/{task_id}", json={"tags": ["urgent", too_long_tag]})
 
         assert response.status_code == 422
         # TAG-02 requires the 422 to indicate *which* tag exceeded the
@@ -190,7 +190,7 @@ class TestUpdateTask:
         created = await client.post(f"/projects/{project_id}/tasks", json={"title": "T"})
         task_id = created.json()["id"]
 
-        response = await client.patch(f"/tasks/{task_id}", json={"title": ""})
+        response = await client.patch(f"/projects/{project_id}/tasks/{task_id}", json={"title": ""})
 
         assert response.status_code == 422
 
@@ -200,7 +200,7 @@ class TestUpdateTask:
         created = await client.post(f"/projects/{project_id}/tasks", json={"title": "T"})
         task_id = created.json()["id"]
 
-        response = await client.patch(f"/tasks/{task_id}", json={"due_at": "not-a-date"})
+        response = await client.patch(f"/projects/{project_id}/tasks/{task_id}", json={"due_at": "not-a-date"})
 
         assert response.status_code == 422
 
@@ -210,14 +210,17 @@ class TestUpdateTask:
         created = await client.post(f"/projects/{project_id}/tasks", json={"title": "T"})
         task_id = created.json()["id"]
 
-        response = await client.patch(f"/tasks/{task_id}", json={"status": "not_a_real_status"})
+        response = await client.patch(f"/projects/{project_id}/tasks/{task_id}", json={"status": "not_a_real_status"})
 
         assert response.status_code == 422
 
     async def test_update_nonexistent_task_returns_404(self, client: AsyncClient) -> None:
         await register_and_login(client, _unique_email("task-upd-404"))
+        project_id = await _create_project(client)
 
-        response = await client.patch(f"/tasks/{uuid.uuid4()}", json={"title": "New"})
+        response = await client.patch(
+            f"/projects/{project_id}/tasks/{uuid.uuid4()}", json={"title": "New"}
+        )
 
         assert response.status_code == 404
 
@@ -229,7 +232,7 @@ class TestUpdateTask:
         await client.post("/auth/logout")
 
         await register_and_login(client, _unique_email("task-upd-b"))
-        response = await client.patch(f"/tasks/{task_id}", json={"title": "Hijacked"})
+        response = await client.patch(f"/projects/{project_id}/tasks/{task_id}", json={"title": "Hijacked"})
 
         assert response.status_code == 404
 
@@ -245,7 +248,7 @@ class TestUpdateTask:
         created = await client.post(f"/projects/{project_id}/tasks", json={"title": "T"})
         task_id = created.json()["id"]
 
-        response = await client.patch(f"/tasks/{task_id}", json={"status": target_status})
+        response = await client.patch(f"/projects/{project_id}/tasks/{task_id}", json={"status": target_status})
 
         assert response.status_code == 200
         assert response.json()["status"] == target_status
@@ -255,10 +258,10 @@ class TestUpdateTask:
         project_id = await _create_project(client)
         created = await client.post(f"/projects/{project_id}/tasks", json={"title": "T"})
         task_id = created.json()["id"]
-        forward = await client.patch(f"/tasks/{task_id}", json={"status": "done"})
+        forward = await client.patch(f"/projects/{project_id}/tasks/{task_id}", json={"status": "done"})
         assert forward.json()["status"] == "done"
 
-        backward = await client.patch(f"/tasks/{task_id}", json={"status": "not_started"})
+        backward = await client.patch(f"/projects/{project_id}/tasks/{task_id}", json={"status": "not_started"})
 
         assert backward.status_code == 200
         assert backward.json()["status"] == "not_started"
@@ -271,7 +274,7 @@ class TestDeleteTask:
         created = await client.post(f"/projects/{project_id}/tasks", json={"title": "To delete"})
         task_id = created.json()["id"]
 
-        response = await client.delete(f"/tasks/{task_id}")
+        response = await client.delete(f"/projects/{project_id}/tasks/{task_id}")
 
         assert response.status_code == 204
         listing = await client.get(f"/projects/{project_id}/tasks")
@@ -279,8 +282,9 @@ class TestDeleteTask:
 
     async def test_delete_nonexistent_task_returns_404(self, client: AsyncClient) -> None:
         await register_and_login(client, _unique_email("task-delete-404"))
+        project_id = await _create_project(client)
 
-        response = await client.delete(f"/tasks/{uuid.uuid4()}")
+        response = await client.delete(f"/projects/{project_id}/tasks/{uuid.uuid4()}")
 
         assert response.status_code == 404
 
@@ -292,7 +296,7 @@ class TestDeleteTask:
         await client.post("/auth/logout")
 
         await register_and_login(client, _unique_email("task-delete-b"))
-        response = await client.delete(f"/tasks/{task_id}")
+        response = await client.delete(f"/projects/{project_id}/tasks/{task_id}")
 
         assert response.status_code == 404
 
@@ -311,14 +315,14 @@ class TestDeleteTask:
         created = await client.post(f"/projects/{project_id}/tasks", json={"title": "With attachment"})
         task_id = created.json()["id"]
         upload = await client.post(
-            f"/tasks/{task_id}/attachments",
+            f"/projects/{project_id}/tasks/{task_id}/attachments",
             files={"file": ("notes.txt", b"hello world", "text/plain")},
         )
         assert upload.status_code == 201, upload.text
         storage_key = upload.json()["storage_key"]
         assert (tmp_path / storage_key).exists()
 
-        response = await client.delete(f"/tasks/{task_id}")
+        response = await client.delete(f"/projects/{project_id}/tasks/{task_id}")
 
         assert response.status_code == 204
         assert not (tmp_path / storage_key).exists()
@@ -336,13 +340,13 @@ class TestDeleteTask:
         created = await client.post(f"/projects/{project_id}/tasks", json={"title": "With attachment"})
         task_id = created.json()["id"]
         upload = await client.post(
-            f"/tasks/{task_id}/attachments",
+            f"/projects/{project_id}/tasks/{task_id}/attachments",
             files={"file": ("notes.txt", b"hello world", "text/plain")},
         )
         assert upload.status_code == 201, upload.text
 
         app.dependency_overrides[get_storage_backend] = lambda: _FailingStorageBackend()
-        response = await client.delete(f"/tasks/{task_id}")
+        response = await client.delete(f"/projects/{project_id}/tasks/{task_id}")
 
         assert response.status_code == 502
         listing = await client.get(f"/projects/{project_id}/tasks")
