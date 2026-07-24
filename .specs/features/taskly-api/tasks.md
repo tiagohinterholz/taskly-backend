@@ -452,11 +452,11 @@ T16 → T17
 - Skill: NONE
 
 **Done when**:
-- [ ] E2E: criar, listar (só os do usuário), renomear cobertos
-- [ ] E2E: delete de projeto com tarefas retorna 409; delete sem tarefas retorna 204
-- [ ] E2E: usuário B recebe 404 ao acessar/editar/deletar projeto de A (ISO-02)
-- [ ] Gate check passa: `uv run pytest tests/unit tests/integration -q`
-- [ ] Test count: 8+ testes e2e
+- [x] E2E: criar, listar (só os do usuário), renomear cobertos
+- [x] E2E: delete de projeto com tarefas retorna 409; delete sem tarefas retorna 204
+- [x] E2E: usuário B recebe 404 ao acessar/editar/deletar projeto de A (ISO-02)
+- [x] Gate check passa: `uv run pytest tests/unit tests/integration -q`
+- [x] Test count: 8+ testes e2e
 
 **Tests**: integration
 **Gate**: full
