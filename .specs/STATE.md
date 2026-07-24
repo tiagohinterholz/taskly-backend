@@ -101,11 +101,11 @@
 ## Handoff
 
 - **Feature**: `backend/.specs/features/taskly-api`
-- **Phase / Task**: Execute em andamento — Fases 1-4 concluídas, incl. T18 (fix de ownership); Fase 5 (routers) prestes a ser disparada
-- **Completed**: spec.md, design.md, tasks.md (18 tasks); commits até `2deb237` (T18) — 94 testes passando (unit + integration)
-- **In-progress**: nenhuma task em execução; prestes a disparar Fase 5
-- **Next step**: Disparar sub-agente da Fase 5 (T7 auth router → T10 project router → T13 task router → T15 attachment router, sequencial, testes e2e contra Postgres real)
+- **Phase / Task**: Execute em andamento — Fases 1-5 concluídas (todos os routers); Fase 6 (T16, wiring final) prestes a ser disparada
+- **Completed**: spec.md, design.md, tasks.md (18 tasks); commits até `c89b501` (T15) — 150 testes passando
+- **In-progress**: nenhuma task em execução; prestes a disparar Fase 6
+- **Next step**: Disparar agente para T16 (montar todos os routers em `app/main.py`, CORS restrito à origem do frontend com credentials, cookies Secure+SameSite=Lax em produção, rate limiter global) — depois Fase 7 (T17 Dockerfile)
 - **Blockers**: none
 - **Uncommitted files**: nenhum
 - **Branch**: master
-- **Notas de ambiente**: Postgres de dev local em `localhost:5433`, container `backend-postgres-1` healthy. `bcrypt==4.0.1` fixado. Fixture `db_session` em `tests/integration/conftest.py` — reutilizar em T7/T10/T13/T15. Exceções de domínio prontas pros routers mapearem: `EmailAlreadyRegisteredError`→409, `InvalidCredentialsError`→401, `InvalidRefreshTokenError`→401, `RateLimitExceededError`→429, `ProjectHasTasksError`→409, `ProjectNotFoundError`→404, `TaskTitleRequiredError`→422, `TagTooLongError`→422 (`.tag`), `TaskNotFoundError`→404. **Atenção**: `TaskService.update`/`delete` agora exigem `project_id` como primeiro parâmetro (mudança do T18). A rota de tarefa é FLAT (`PATCH/DELETE /tasks/{id}`, sem `project_id` na URL, conforme `spec.md`/`tasks.md`/frontend spec — não mudar isso). Então o router T13 precisa: (1) buscar a tarefa por `task_id` sem escopo ainda (vai exigir um novo `TaskRepository.get_by_id(task_id) -> Task | None`, não existe ainda), (2) pegar `task.project_id`, (3) chamar `ProjectRepository.get_for_user(project_id, user_id)` (já existe, do T18) pra confirmar que o projeto é do usuário logado — 404 se não for, (4) só então chamar `TaskService.update/delete(project_id, task_id, ...)`, que reverifica internamente (defesa em profundidade, redundância aceitável).
+- **Notas de ambiente**: Postgres de dev local em `localhost:5433`, container `backend-postgres-1` healthy. `bcrypt==4.0.1` fixado. `httpx` + `python-multipart` adicionados como deps (T7/T15). N+1 de anexos resolvido via `AttachmentRepository.list_for_tasks` (batch, com teste de regressão de contagem de query) — reutilizar esse padrão se novas listagens agregadas surgirem. `AuthService` reconstruído por request compartilha o rate-limit dict via um dict no nível do módulo do router — se T16 mudar a forma como `AuthService` é instanciado (ex.: DI via `Depends`), preservar esse compartilhamento pra não quebrar AUTH-05 (429).
