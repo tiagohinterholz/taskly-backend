@@ -314,3 +314,36 @@ class TestDownloadAttachment:
         )
 
         assert response.status_code == 404
+
+    async def test_download_for_task_in_different_project_returns_404(
+        self, app: FastAPI, client: AsyncClient, tmp_path: Path
+    ) -> None:
+        """Isolates the same-user, cross-project mismatch from the
+        attachment-to-task check (level c), which would otherwise mask it:
+        the attachment genuinely belongs to task_id (so level c passes), and
+        project_id genuinely belongs to the caller (so the top-level
+        ownership check passes) — but task_id actually belongs to a
+        *different* project than the one named in the URL. Only the
+        task-to-project check (TaskRepository.get_for_project) can catch
+        this. A prior discrimination mutant survived here (Verifier round
+        following T19) because the original cross-project test also swapped
+        the attachment's task, which let level (c) catch it for the wrong
+        reason.
+        """
+        app.dependency_overrides[get_storage_backend] = lambda: LocalStorageBackend(
+            base_path=str(tmp_path)
+        )
+        await register_and_login(client, _unique_email("att-download-cross-project"))
+        project_a_id, _ = await _create_task(client, "Project A")
+        project_b_id, task_b_id = await _create_task(client, "Project B")
+        upload = await client.post(
+            f"/projects/{project_b_id}/tasks/{task_b_id}/attachments",
+            files={"file": ("notes.txt", b"hello", "text/plain")},
+        )
+        attachment_id = upload.json()["id"]
+
+        response = await client.get(
+            f"/projects/{project_a_id}/tasks/{task_b_id}/attachments/{attachment_id}/download"
+        )
+
+        assert response.status_code == 404
