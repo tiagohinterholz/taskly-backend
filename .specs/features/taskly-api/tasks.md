@@ -506,12 +506,12 @@ T16 → T17
 - Skill: NONE
 
 **Done when**:
-- [ ] E2E: upload com sucesso retorna referência do anexo
-- [ ] E2E: arquivo >10MB retorna 413 sem salvar
-- [ ] E2E: falha do storage (mockada) retorna 502 sem afetar os demais dados da tarefa
-- [ ] E2E: remoção de anexo remove do storage e da listagem
-- [ ] Gate check passa: `uv run pytest tests/unit tests/integration -q`
-- [ ] Test count: 6+ testes e2e
+- [x] E2E: upload com sucesso retorna referência do anexo
+- [x] E2E: arquivo >10MB retorna 413 sem salvar
+- [x] E2E: falha do storage (mockada) retorna 502 sem afetar os demais dados da tarefa
+- [x] E2E: remoção de anexo remove do storage e da listagem
+- [x] Gate check passa: `uv run pytest tests/unit tests/integration -q`
+- [x] Test count: 6+ testes e2e
 
 **Tests**: integration
 **Gate**: full
