@@ -3,7 +3,7 @@
   "promote_threshold": 2,
   "window_days": 45,
   "quarantine_threshold": 2,
-  "next_id": 7,
+  "next_id": 8,
   "lessons": [
     {
       "id": "L-001",
@@ -112,6 +112,24 @@
       ],
       "created": "2026-07-24T11:07:35Z",
       "last_seen": "2026-07-24T11:07:35Z"
+    },
+    {
+      "id": "L-007",
+      "key": "ac_gap::when an ownership check spans multiple layers parameters in a nested route e g project id from url child resource id add a router e2e level test for the specific combination where the outer id is genuinely owned by the caller but the inner id belongs to a different parent not just a repository unit test for that combination",
+      "text": "When an ownership check spans multiple layers/parameters in a nested route (e.g. project_id from URL + child resource id), add a router/e2e-level test for the specific combination where the outer id is genuinely owned by the caller but the inner id belongs to a different parent, not just a repository-unit test for that combination.",
+      "signal": "ac_gap",
+      "scope": "routes",
+      "status": "candidate",
+      "features": [
+        "taskly-api"
+      ],
+      "recurrence": 1,
+      "harmful": 0,
+      "evidence": [
+        "tests/integration/api/test_tasks_router.py (ISO-02, router layer) (routes)"
+      ],
+      "created": "2026-07-24T12:21:34Z",
+      "last_seen": "2026-07-24T12:21:34Z"
     }
   ]
 }

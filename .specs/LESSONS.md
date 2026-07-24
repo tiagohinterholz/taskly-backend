@@ -50,6 +50,12 @@ Seen once or not yet corroborated. Tracked, not trusted.
 - evidence: PROJ-01 (validation)
 - last seen: 2026-07-24T11:07:35Z
 
+### L-007 — When an ownership check spans multiple layers/parameters in a nested route (e.g. project_id from URL + child resource id), add a router/e2e-level test for the specific combination where the outer id is genuinely owned by the caller but the inner id belongs to a different parent, not just a repository-unit test for that combination.
+- signal: `ac_gap` · recurrence: 1 feature(s) · scope: `routes` · harmful: 0
+- features: taskly-api
+- evidence: tests/integration/api/test_tasks_router.py (ISO-02, router layer) (routes)
+- last seen: 2026-07-24T12:21:34Z
+
 ## Quarantined (failed when applied — ignore)
 
 A confirmed lesson that recurred alongside failure. Kept for the maintainer to review.
