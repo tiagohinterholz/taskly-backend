@@ -15,5 +15,23 @@ services:
       timeout: 5s
       retries: 5
 
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # Overrides the .env value (which targets localhost:5433 for host-side
+      # `uv run uvicorn`): inside the compose network the API reaches
+      # Postgres via the service name on its container port.
+      DATABASE_URL: postgresql+asyncpg://taskly:taskly@postgres:5432/taskly
+    volumes:
+      - attachments_data:/app/data/attachments
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres_data:
+  attachments_data:

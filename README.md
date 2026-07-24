@@ -78,9 +78,10 @@ Estratégia de testes, matriz de cobertura por camada e comandos de gate: [`.spe
 Imagem multi-stage: o stage `builder` resolve as dependências com `uv`, o stage `runtime` final não contém `uv` nem toolchain de build — só o virtualenv e o código da aplicação, rodando como usuário não-root (`appuser`).
 
 ```bash
-docker build -t taskly-api .
-docker run --rm -p 8000:8000 --env-file .env taskly-api
+docker compose up -d --build
 ```
+
+Isso sobe Postgres e API juntos na mesma rede do compose; o serviço `api` usa `DATABASE_URL=postgresql+asyncpg://taskly:taskly@postgres:5432/taskly` (hostname do serviço, não `localhost` — dentro do container `localhost` aponta para si mesmo, não para o host). O restante das variáveis vem do `.env` local via `env_file`.
 
 Migrations rodam automaticamente no start do container (`alembic upgrade head`) antes de subir o servidor — ver `entrypoint.sh`.
 
