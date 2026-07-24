@@ -571,6 +571,8 @@ T16 → T17
 
 **Commit**: `build(docker): add multi-stage Dockerfile with non-root runtime user`
 
+**Addendum (post-review fix):** container now runs `alembic upgrade head` via `entrypoint.sh` before starting uvicorn — see commit `fix(docker): run alembic migrations automatically on container startup`. Verified against a freshly created (empty) Postgres: migrations apply and `GET /health` responds 200; an unreachable database causes the container to exit non-zero without starting uvicorn.
+
 ---
 
 ## Parallel Execution Map

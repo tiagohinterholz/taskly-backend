@@ -37,6 +37,11 @@ COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini ./alembic.ini
 
+# Entrypoint runs `alembic upgrade head` before starting the API so a fresh
+# deploy never boots uvicorn against an un-migrated database.
+COPY entrypoint.sh ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
+
 # Local attachment storage directory (LOCAL_STORAGE_PATH default from
 # .env.example). Only this directory and the app code are writable by
 # appuser; the rest of the image filesystem stays read-only at runtime.
@@ -49,4 +54,5 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 8000
 
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["/app/.venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
