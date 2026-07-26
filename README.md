@@ -95,6 +95,37 @@ Pensado para: **EC2** (roda a imagem Docker acima), **S3** (anexos, `STORAGE_BAC
 - `COOKIE_SECURE=true` (a app já serve atrás de HTTPS)
 - `JWT_SECRET` com um valor real e secreto (nunca reaproveitar o do `.env.example`)
 
+### Provisionamento (rodar você mesmo — passo único, manual)
+
+1. **EC2**: instância Ubuntu 22.04 (t3.micro/t3.small já resolve), security group liberando `22` (SSH, restrito ao seu IP) e `8000` (API — ou `80`/`443` se colocar um proxy reverso na frente).
+2. **Docker na instância**:
+   ```bash
+   sudo apt update && sudo apt install -y docker.io docker-compose-plugin
+   sudo usermod -aG docker $USER   # relogar depois disso
+   ```
+3. **Clonar o repositório** (é público, então HTTPS funciona sem credencial):
+   ```bash
+   mkdir -p ~/taskly && cd ~/taskly
+   git clone https://github.com/<seu-usuario>/taskly-backend.git backend
+   cd backend
+   cp .env.example .env
+   ```
+4. **Editar o `.env` na instância** com os valores reais: `DATABASE_URL` (Aurora), `JWT_SECRET` (gerar um novo, ex. `openssl rand -hex 32`), `STORAGE_BACKEND=s3` + credenciais, `CORS_ORIGIN` (domínio do CloudFront), `COOKIE_SECURE=true`.
+5. **Subir uma vez manualmente** pra confirmar que funciona: `docker compose up -d --build`, depois `curl localhost:8000/health`.
+6. **Aurora PostgreSQL**: criar o cluster, liberar acesso pro security group da EC2, colar o endpoint em `DATABASE_URL`.
+
+### CI/CD (GitHub Actions)
+
+Workflow em [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml): a cada push em `master`, roda a suíte completa + `pip-audit` e, se passar, conecta na EC2 via SSH e faz `git reset --hard` + `docker compose up -d --build`. Segredos necessários no repositório (**Settings → Secrets and variables → Actions**):
+
+| Secret | Valor |
+| --- | --- |
+| `EC2_HOST` | IP público ou DNS da instância |
+| `EC2_USER` | usuário SSH (ex. `ubuntu`) |
+| `EC2_SSH_KEY` | conteúdo da chave privada (`.pem`) usada pra conectar |
+
+O `.env` com os segredos da aplicação (JWT, banco, S3) fica só na instância EC2 — nunca passa pelo GitHub Actions.
+
 ## Segurança — decisões relevantes
 
 - Senhas com `bcrypt`; sessão via JWT de curta duração (access token) + refresh token opaco persistido (hash) no banco, com rotação a cada refresh e revogação real no logout.
