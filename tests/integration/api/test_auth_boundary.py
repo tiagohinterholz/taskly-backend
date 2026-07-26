@@ -41,6 +41,7 @@ _PROTECTED_ROUTES: list[tuple[str, str, dict]] = [
         f"/projects/{_RANDOM_PROJECT_ID}/tasks/{_RANDOM_ID}/attachments/{uuid.uuid4()}/download",
         {},
     ),
+    ("GET", "/auth/me", {}),
 ]
 
 

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_db_session, get_jwt_service
+from app.api.dependencies import get_current_user, get_db_session, get_jwt_service
 from app.core.security import JWTService
 from app.models.user import User
 from app.repositories.refresh_token_repository import RefreshTokenRepository
@@ -171,3 +171,11 @@ async def logout(
         await auth_service.logout(refresh_token)
     response.delete_cookie("access_token")
     response.delete_cookie("refresh_token")
+
+
+@router.get("/me", response_model=UserOut)
+async def get_me(user: User = Depends(get_current_user)) -> User:
+    """Returns the authenticated user's own profile (id, email, created_at).
+    Used by the frontend to greet the logged-in user (ISO-01: 401 without a
+    valid session, same as every other protected route)."""
+    return user

@@ -293,3 +293,29 @@ class TestGetCurrentUserDependency:
 
         assert response.status_code == 200
         assert response.json()["email"] == email
+
+
+class TestGetMe:
+    async def test_get_me_without_cookie_returns_401(self, client: AsyncClient) -> None:
+        response = await client.get("/auth/me")
+
+        assert response.status_code == 401
+
+    async def test_get_me_with_valid_session_returns_own_profile(
+        self, client: AsyncClient
+    ) -> None:
+        email = _unique_email("me")
+        register = await client.post(
+            "/auth/register", json={"email": email, "password": _PASSWORD}
+        )
+        user_id = register.json()["id"]
+        await client.post("/auth/login", json={"email": email, "password": _PASSWORD})
+
+        response = await client.get("/auth/me")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["email"] == email
+        assert body["id"] == user_id
+        assert "password" not in body
+        assert "password_hash" not in body
