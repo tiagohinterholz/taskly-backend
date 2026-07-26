@@ -85,34 +85,15 @@ Isso sobe Postgres e API juntos na mesma rede do compose; o serviço `api` usa `
 
 Migrations rodam automaticamente no start do container (`alembic upgrade head`) antes de subir o servidor — ver `entrypoint.sh`.
 
-## Deploy (AWS)
+## Deploy (AWS — EC2, sem domínio próprio)
 
-Pensado para: **EC2** (roda a imagem Docker acima), **S3** (anexos, `STORAGE_BACKEND=s3`) e **Aurora PostgreSQL** (compatível com Postgres via `asyncpg` — pode exigir SSL na connection string, ex. `?ssl=require`, dependendo da configuração do cluster). Nenhuma mudança de código é necessária entre dev e produção — só variáveis de ambiente:
+**EC2** roda tudo: o backend (container Docker, porta 8000 vinculada só a `127.0.0.1`), o Postgres (container, `docker-compose.yml`) e um **Nginx** na frente servindo o build estático do frontend (repositório separado, mesma instância) e fazendo proxy de `/api/*` pro container do backend. Anexos vão pro **S3** (`STORAGE_BACKEND=s3`). Nenhuma mudança de código entre dev e produção — só variáveis de ambiente. Passo a passo completo de provisionamento (S3, IAM, EC2, Nginx):
 
-- `DATABASE_URL` apontando para o Aurora
-- `STORAGE_BACKEND=s3` + credenciais/bucket
-- `CORS_ORIGIN` apontando para a URL do frontend em produção
-- `COOKIE_SECURE=true` (a app já serve atrás de HTTPS)
-- `JWT_SECRET` com um valor real e secreto (nunca reaproveitar o do `.env.example`)
-
-### Provisionamento (rodar você mesmo — passo único, manual)
-
-1. **EC2**: instância Ubuntu 22.04 (t3.micro/t3.small já resolve), security group liberando `22` (SSH, restrito ao seu IP) e `8000` (API — ou `80`/`443` se colocar um proxy reverso na frente).
-2. **Docker na instância**:
-   ```bash
-   sudo apt update && sudo apt install -y docker.io docker-compose-plugin
-   sudo usermod -aG docker $USER   # relogar depois disso
-   ```
-3. **Clonar o repositório** (é público, então HTTPS funciona sem credencial):
-   ```bash
-   mkdir -p ~/taskly && cd ~/taskly
-   git clone https://github.com/<seu-usuario>/taskly-backend.git backend
-   cd backend
-   cp .env.example .env
-   ```
-4. **Editar o `.env` na instância** com os valores reais: `DATABASE_URL` (Aurora), `JWT_SECRET` (gerar um novo, ex. `openssl rand -hex 32`), `STORAGE_BACKEND=s3` + credenciais, `CORS_ORIGIN` (domínio do CloudFront), `COOKIE_SECURE=true`.
-5. **Subir uma vez manualmente** pra confirmar que funciona: `docker compose up -d --build`, depois `curl localhost:8000/health`.
-6. **Aurora PostgreSQL**: criar o cluster, liberar acesso pro security group da EC2, colar o endpoint em `DATABASE_URL`.
+- `DATABASE_URL` → `postgresql+asyncpg://taskly:<senha>@postgres:5432/taskly` (Postgres roda em container na mesma EC2 — sem Aurora neste deploy)
+- `STORAGE_BACKEND=s3` + credenciais/bucket (anexos)
+- `CORS_ORIGIN` — sem efeito prático neste modelo (frontend e backend são a mesma origem via Nginx), mas mantido preenchido por segurança
+- `COOKIE_SECURE=false` — **decisão deliberada, não descuido**: sem domínio próprio não tem HTTPS de verdade (Let's Encrypt/ACM exigem domínio), então a app fica em `http://<IP-da-EC2>` puro. `Secure=true` faria o navegador descartar o cookie de sessão nessa conexão.
+- `JWT_SECRET` com um valor real e secreto (`openssl rand -hex 32`, nunca reaproveitar o do `.env.example`)
 
 ### CI/CD (GitHub Actions)
 
@@ -124,7 +105,7 @@ Workflow em [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml): a ca
 | `EC2_USER` | usuário SSH (ex. `ubuntu`) |
 | `EC2_SSH_KEY` | conteúdo da chave privada (`.pem`) usada pra conectar |
 
-O `.env` com os segredos da aplicação (JWT, banco, S3) fica só na instância EC2 — nunca passa pelo GitHub Actions.
+O `.env` com os segredos da aplicação (JWT, banco, S3) fica só na instância EC2 — nunca passa pelo GitHub Actions. O repositório `frontend` usa os **mesmos** três secrets (mesma EC2) pro próprio deploy.
 
 ## Segurança — decisões relevantes
 
