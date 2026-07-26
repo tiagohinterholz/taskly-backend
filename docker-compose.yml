@@ -18,7 +18,11 @@ services:
   api:
     build: .
     ports:
-      - "8000:8000"
+      # Bound to loopback only: public traffic reaches this container via
+      # Nginx (reverse proxy on the same EC2 host/
+      # deploy notes), not directly. Keeps the container off the public
+      # interface entirely — defense in depth once Nginx owns port 80/443.
+      - "127.0.0.1:8000:8000"
     env_file:
       - .env
     environment:
