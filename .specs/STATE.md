@@ -130,16 +130,23 @@
 - **Date**: 2026-07-24
 - **Status**: active
 
+### AD-017
+- **Decision**: `POSTGRES_PASSWORD` lido de `${POSTGRES_PASSWORD}` no `docker-compose.yml` (via `.env`, com fallback `taskly` pro dev local), nunca mais hardcoded direto no compose file.
+- **Reason**: Incidente real em produção — a senha só tinha sido trocada editando `docker-compose.yml` direto na EC2 (arquivo rastreado pelo git). O deploy automático (`git reset --hard origin/master`) desfez essa edição a cada push, revertendo pro placeholder antigo — mas o Postgres já tinha inicializado o volume com a senha nova de verdade (ignora `POSTGRES_PASSWORD` quando o volume já existe), então a API passou a falhar `InvalidPasswordError` em toda conexão. Dados nunca foram perdidos, só ficaram inacessíveis pelo mismatch de credencial.
+- **Trade-off**: Nenhum — só corrige uma fragilidade real (qualquer arquivo git-tracked que precise de valor específico de servidor é incompatível com `git reset --hard` em deploy automatizado).
+- **Scope**: Backend (infra/deploy) — regra geral pra lembrar: segredo de servidor nunca em arquivo rastreado, sempre em `.env`.
+- **Date**: 2026-07-26
+- **Status**: active
+
 ## Handoff
 
-- **Feature**: `backend/.specs/features/taskly-api` — ✅ **VERIFIED (PASS)** duas vezes; T19 (fix de URL de anexo, commit `db77a8b`) concluída, 197 testes passando
-- **Phase / Task**: Execute + Verify + revisão manual + re-verificação + T19, todas concluídas; re-verificação focada em T19 prestes a ser disparada (endpoint novo, área sensível de auth)
-- **Completed**: spec.md, design.md, tasks.md, validation.md (PASS, commit `8a75c02` — pré-T19), LESSONS.md/lessons.json (7 lições candidatas), README.md; 197 testes passando; `docker build` verificado
-- **In-progress**: nenhuma task; prestes a disparar re-verificação focada em T19
-- **Next step**: Verificação de T19 (endpoint `GET .../attachments/{id}/download`, novo, autenticado). Depois disso, atualizar o `AttachmentUploader.tsx` do frontend pra consumir a URL real em vez do workaround de `URL.createObjectURL` só-sessão.
-- **Blockers**: none
+- **Feature**: `backend/.specs/features/taskly-api` — ✅ **VERIFIED (PASS)**; deploy real em produção (EC2 + Nginx + S3, sem domínio) funcionando, CI/CD testado de ponta a ponta
+- **Phase / Task**: Todas as fases de Execute/Verify concluídas; deploy manual + automatizado (GitHub Actions) validados; `GET /auth/me` adicionado pós-deploy (commit `818a38b`); incidente de senha do Postgres diagnosticado e corrigido (`AD-017`, commit `7afddbe`)
+- **Completed**: spec.md, design.md, tasks.md, validation.md; 201 testes passando; deploy real em `http://<IP-da-EC2>` (backend + frontend na mesma origem via Nginx, sem domínio, `COOKIE_SECURE=false` deliberado)
+- **In-progress**: nenhuma — aguardando o usuário aplicar a recuperação na EC2 (resetar a senha real do Postgres pra um valor conhecido + preencher `POSTGRES_PASSWORD` no `.env` da EC2 + redeploy) depois do incidente do AD-017
+- **Next step**: Confirmar que a recuperação na EC2 funcionou (dados de projetos/tarefas voltam a aparecer, login/logout voltam a funcionar). Considerar fechar os gaps Minor abaixo se sobrar tempo.
+- **Blockers**: none (o fix já está commitado; só falta o usuário aplicar a recuperação pontual na instância)
 - **Uncommitted files**: nenhum
 - **Branch**: master
-- **Gaps Minor não bloqueantes ainda abertos** (nenhum é regressão, nenhum bloqueia): (1) boundary de nome de projeto (1-100 chars) sem teste explícito — lição L-006; (2) cenário "project_id do atacante na URL + task_id de outro projeto" só coberto em teste de repository, não em teste e2e do router — lição L-007.
-- **Notas T19**: `AttachmentOut.url` sempre aponta pro endpoint próprio (`.../download`), nunca URL crua de storage; local faz proxy do conteúdo, S3 redireciona (307) pra presigned URL (expira em 1h). Nova rota já incluída no teste sistemático de 401-sem-sessão (`test_auth_boundary.py`).
-- **Notas de ambiente**: Postgres de dev local em `localhost:5433`, container `backend-postgres-1` healthy. `bcrypt==4.0.1` fixado. `python-multipart==0.0.31`. N+1 de anexos resolvido via `AttachmentRepository.list_for_tasks` (batch). `Dockerfile` multi-stage + `entrypoint.sh` (migração automática) prontos. Rotas de task/anexo 100% aninhadas sob `/projects/{id}/tasks/{id}[/attachments/...]` (AD-013), ownership verificado uma vez por request via `ProjectRepository.get_for_user` + `TaskRepository.get_for_project` — confirmado sem regressão de IDOR pela re-verificação.
+- **Gaps Minor não bloqueantes ainda abertos**: (1) boundary de nome de projeto (1-100 chars) sem teste explícito — lição L-006; (2) cenário "project_id do atacante na URL + task_id de outro projeto" só coberto em teste de repository, não em teste e2e do router — lição L-007.
+- **Notas de ambiente**: Postgres de dev local em `localhost:5433`. `bcrypt==4.0.1` fixado. `python-multipart==0.0.31`. N+1 de anexos resolvido via `AttachmentRepository.list_for_tasks` (batch). `Dockerfile` multi-stage + `entrypoint.sh` (migração automática) prontos. Rotas de task/anexo 100% aninhadas sob `/projects/{id}/tasks/{id}[/attachments/...]` (AD-013). Deploy real: EC2 única rodando backend (Docker) + Postgres (container) + Nginx servindo o frontend estático e fazendo proxy de `/api/*` — sem domínio, sem HTTPS, `COOKIE_SECURE=false` deliberado (ver `../.local.md`).
