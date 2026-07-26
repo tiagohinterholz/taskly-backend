@@ -3,7 +3,10 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: taskly
-      POSTGRES_PASSWORD: taskly
+      # Read from .env (untracked, safe from `git reset --hard` on deploy —
+      # see AD-017). Falls back to the dev placeholder if .env doesn't set
+      # it, so local dev without a custom password keeps working unchanged.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-taskly}
       POSTGRES_DB: taskly
     ports:
       - "5433:5432"
@@ -28,8 +31,10 @@ services:
     environment:
       # Overrides the .env value (which targets localhost:5433 for host-side
       # `uv run uvicorn`): inside the compose network the API reaches
-      # Postgres via the service name on its container port.
-      DATABASE_URL: postgresql+asyncpg://taskly:taskly@postgres:5432/taskly
+      # Postgres via the service name on its container port. Password comes
+      # from the same ${POSTGRES_PASSWORD} as the postgres service above —
+      # never hardcoded here, so the two can never drift out of sync.
+      DATABASE_URL: postgresql+asyncpg://taskly:${POSTGRES_PASSWORD:-taskly}@postgres:5432/taskly
     volumes:
       - attachments_data:/app/data/attachments
     depends_on:
