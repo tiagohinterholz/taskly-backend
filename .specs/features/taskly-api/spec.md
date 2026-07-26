@@ -28,6 +28,19 @@ Explicitamente excluído. Documentado para prevenir scope creep.
 
 ---
 
+## Ideia para versão futura (v2) — Grupos/times com RBAC
+
+**Não implementar agora** — registrado aqui só pra ficar rastreável, discutido com o usuário em 2026-07-26. Expande a linha "Colaboração multi-usuário / times" da tabela de Out of Scope acima com o desenho da ideia, pra não perder o contexto até lá.
+
+- Usuário pode **criar um grupo** e **convidar pessoas** pra participar dele.
+- **RBAC dentro do grupo**: precisa definir papéis (ex. owner/membro) e o que cada papel pode/não pode fazer (criar projeto no grupo, editar tarefa de outro membro, remover membro, etc.) — este é o ponto de maior ambiguidade, precisa de uma sessão de Discuss própria quando for endereçado.
+- **Compartilhamento**: convidar alguém pro grupo com dois níveis possíveis (participar de verdade vs. só visualizar) — a distinguir na hora do design.
+- **Vínculo grupo↔projeto** nos dois sentidos: criar um grupo e vincular a um projeto já existente, OU criar um projeto e vincular a um grupo já existente.
+- **Pré-requisito de infraestrutura**: convite real por e-mail exige um cliente de e-mail configurado (ex. SES, Postmark, SendGrid) — hoje o app não envia e-mail nenhum; isso é uma dependência nova, não só código.
+- **Impacto arquitetural a considerar quando for desenhar**: hoje `Project.user_id` é uma FK direta pra um único dono (AD original: "usuário só acessa seus próprios dados"). Introduzir grupos provavelmente muda pra um modelo de membership (tabela `group_members` com papel) e o ownership check de `ProjectRepository.get_for_user` (AD-012) precisa virar "usuário pertence ao grupo dono do projeto, com o papel X" — não é um acréscimo trivial, é uma mudança de modelo de autorização.
+
+---
+
 ## Assumptions & Open Questions
 
 Every ambiguity is resolved or recorded here — nothing is left silently unclear.
