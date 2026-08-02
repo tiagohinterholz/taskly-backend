@@ -21,7 +21,9 @@ from app.services.group_service import (
     InviteExpiredError,
     InviteNotFoundError,
     InviteRateLimitExceededError,
+    NotGroupMemberError,
     NotGroupOwnerError,
+    SoleOwnerCannotLeaveError,
 )
 
 # No blanket prefix on this router (unlike projects.py's `prefix="/projects"`):
@@ -87,6 +89,10 @@ class GroupInviteCreateOut(GroupInviteOut):
     """
 
     token: str
+
+
+class TransferOwnershipRequest(BaseModel):
+    new_owner_user_id: uuid.UUID
 
 
 # GroupService.create_invite() rate-limits per (group_id, owner_user_id) using
@@ -284,3 +290,60 @@ async def accept_invite(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="you are already a member of this group"
         ) from exc
+
+
+@router.delete("/groups/{group_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_member(
+    group_id: uuid.UUID,
+    user_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    group_service: GroupService = Depends(_get_group_service),
+) -> None:
+    try:
+        await group_service.remove_member(user.id, group_id, user_id)
+    except GroupNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="group not found") from exc
+    except NotGroupOwnerError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="only the group owner can perform this action"
+        ) from exc
+
+
+@router.post("/groups/{group_id}/leave")
+async def leave_group(
+    group_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    group_service: GroupService = Depends(_get_group_service),
+) -> dict[str, str]:
+    try:
+        await group_service.leave(user.id, group_id)
+    except GroupNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="group not found") from exc
+    except SoleOwnerCannotLeaveError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="transfer ownership before leaving the group",
+        ) from exc
+    return {"message": "left group"}
+
+
+@router.post("/groups/{group_id}/transfer-ownership")
+async def transfer_ownership(
+    group_id: uuid.UUID,
+    payload: TransferOwnershipRequest,
+    user: User = Depends(get_current_user),
+    group_service: GroupService = Depends(_get_group_service),
+) -> dict[str, str]:
+    try:
+        await group_service.transfer_ownership(user.id, group_id, payload.new_owner_user_id)
+    except GroupNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="group not found") from exc
+    except NotGroupOwnerError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="only the group owner can perform this action"
+        ) from exc
+    except NotGroupMemberError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="user is not a member of this group"
+        ) from exc
+    return {"message": "ownership transferred"}

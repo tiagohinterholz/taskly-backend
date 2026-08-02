@@ -33,6 +33,17 @@ async def _register_and_get_id(client: AsyncClient, email: str) -> uuid.UUID:
     return user_id
 
 
+async def _login(client: AsyncClient, email: str) -> None:
+    """Re-authenticates as an already-registered user (register_and_login
+    always registers first, so it can't be reused to switch back to a user
+    registered earlier in the same test).
+    """
+    login_response = await client.post(
+        "/auth/login", json={"email": email, "password": "correct-horse-battery-staple"}
+    )
+    assert login_response.status_code == 200, login_response.text
+
+
 class TestCreateGroup:
     async def test_create_group_returns_201(self, client: AsyncClient) -> None:
         await register_and_login(client, _unique_email("grp-create"))
@@ -551,3 +562,154 @@ class TestAcceptInvite:
         response = await client.post(f"/invites/{token}/accept")
 
         assert response.status_code == 410
+
+
+class TestRemoveMember:
+    async def test_remove_member_by_owner_returns_204_and_revokes_access(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        owner_email = _unique_email("grp-remove-owner")
+        await register_and_login(client, owner_email)
+        created = await client.post("/groups", json={"name": "Team"})
+        group_id = uuid.UUID(created.json()["id"])
+        member_id = await _register_and_get_id(client, _unique_email("grp-remove-member"))
+        await GroupRepository(db_session).add_member(group_id, member_id, GroupRole.MEMBER)
+        await db_session.commit()
+        await client.post("/auth/logout")
+
+        await _login(client, owner_email)
+        response = await client.delete(f"/groups/{group_id}/members/{member_id}")
+
+        assert response.status_code == 204
+        members = await client.get(f"/groups/{group_id}/members")
+        assert members.json()["total"] == 1
+
+    async def test_remove_member_by_non_owner_member_returns_403(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        await register_and_login(client, _unique_email("grp-remove-403-owner"))
+        created = await client.post("/groups", json={"name": "Team"})
+        group_id = uuid.UUID(created.json()["id"])
+        target_id = await _register_and_get_id(client, _unique_email("grp-remove-403-target"))
+        await GroupRepository(db_session).add_member(group_id, target_id, GroupRole.MEMBER)
+        await db_session.commit()
+        await client.post("/auth/logout")
+
+        acting_member_id = await _register_and_get_id(client, _unique_email("grp-remove-403-actor"))
+        await GroupRepository(db_session).add_member(group_id, acting_member_id, GroupRole.MEMBER)
+        await db_session.commit()
+
+        response = await client.delete(f"/groups/{group_id}/members/{target_id}")
+
+        assert response.status_code == 403
+
+    async def test_remove_member_by_non_member_returns_404(self, client: AsyncClient) -> None:
+        await register_and_login(client, _unique_email("grp-remove-404-owner"))
+        created = await client.post("/groups", json={"name": "Team"})
+        group_id = created.json()["id"]
+        await client.post("/auth/logout")
+
+        await register_and_login(client, _unique_email("grp-remove-404-outsider"))
+        response = await client.delete(f"/groups/{group_id}/members/{uuid.uuid4()}")
+
+        assert response.status_code == 404
+
+
+class TestLeaveGroup:
+    async def test_member_leave_returns_200(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        await register_and_login(client, _unique_email("grp-leave-owner"))
+        created = await client.post("/groups", json={"name": "Team"})
+        group_id = uuid.UUID(created.json()["id"])
+        await client.post("/auth/logout")
+
+        member_email = _unique_email("grp-leave-member")
+        member_id = await _register_and_get_id(client, member_email)
+        await GroupRepository(db_session).add_member(group_id, member_id, GroupRole.MEMBER)
+        await db_session.commit()
+
+        response = await client.post(f"/groups/{group_id}/leave")
+
+        assert response.status_code == 200
+        members = await client.get(f"/groups/{group_id}/members")
+        assert members.status_code == 404  # no longer a member, access revoked
+
+    async def test_owner_leave_without_transfer_returns_409(self, client: AsyncClient) -> None:
+        await register_and_login(client, _unique_email("grp-leave-409-owner"))
+        created = await client.post("/groups", json={"name": "Team"})
+        group_id = created.json()["id"]
+
+        response = await client.post(f"/groups/{group_id}/leave")
+
+        assert response.status_code == 409
+
+    async def test_leave_by_non_member_returns_404(self, client: AsyncClient) -> None:
+        await register_and_login(client, _unique_email("grp-leave-404-owner"))
+        created = await client.post("/groups", json={"name": "Team"})
+        group_id = created.json()["id"]
+        await client.post("/auth/logout")
+
+        await register_and_login(client, _unique_email("grp-leave-404-outsider"))
+        response = await client.post(f"/groups/{group_id}/leave")
+
+        assert response.status_code == 404
+
+
+class TestTransferOwnership:
+    async def test_transfer_by_non_owner_member_returns_403(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        await register_and_login(client, _unique_email("grp-transfer-403-owner"))
+        created = await client.post("/groups", json={"name": "Team"})
+        group_id = uuid.UUID(created.json()["id"])
+        target_id = await _register_and_get_id(client, _unique_email("grp-transfer-403-target"))
+        await GroupRepository(db_session).add_member(group_id, target_id, GroupRole.MEMBER)
+        await db_session.commit()
+        await client.post("/auth/logout")
+
+        acting_member_id = await _register_and_get_id(client, _unique_email("grp-transfer-403-actor"))
+        await GroupRepository(db_session).add_member(group_id, acting_member_id, GroupRole.MEMBER)
+        await db_session.commit()
+
+        response = await client.post(
+            f"/groups/{group_id}/transfer-ownership", json={"new_owner_user_id": str(target_id)}
+        )
+
+        assert response.status_code == 403
+
+    async def test_transfer_to_non_member_returns_404(self, client: AsyncClient) -> None:
+        await register_and_login(client, _unique_email("grp-transfer-404-owner"))
+        created = await client.post("/groups", json={"name": "Team"})
+        group_id = created.json()["id"]
+
+        response = await client.post(
+            f"/groups/{group_id}/transfer-ownership", json={"new_owner_user_id": str(uuid.uuid4())}
+        )
+
+        assert response.status_code == 404
+
+    async def test_transfer_ownership_happy_path_swaps_roles(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        owner_email = _unique_email("grp-transfer-owner")
+        owner_id = await _register_and_get_id(client, owner_email)
+        created = await client.post("/groups", json={"name": "Team"})
+        group_id = uuid.UUID(created.json()["id"])
+        await client.post("/auth/logout")
+
+        new_owner_id = await _register_and_get_id(client, _unique_email("grp-transfer-new-owner"))
+        await GroupRepository(db_session).add_member(group_id, new_owner_id, GroupRole.MEMBER)
+        await db_session.commit()
+        await client.post("/auth/logout")
+
+        await _login(client, owner_email)
+        response = await client.post(
+            f"/groups/{group_id}/transfer-ownership", json={"new_owner_user_id": str(new_owner_id)}
+        )
+        assert response.status_code == 200
+
+        members = await client.get(f"/groups/{group_id}/members")
+        roles_by_user = {item["user_id"]: item["role"] for item in members.json()["items"]}
+        assert roles_by_user[str(new_owner_id)] == "owner"
+        assert roles_by_user[str(owner_id)] == "member"
