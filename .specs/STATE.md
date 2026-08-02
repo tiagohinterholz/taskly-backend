@@ -150,3 +150,19 @@
 - **Branch**: master
 - **Gaps Minor não bloqueantes ainda abertos**: (1) boundary de nome de projeto (1-100 chars) sem teste explícito — lição L-006; (2) cenário "project_id do atacante na URL + task_id de outro projeto" só coberto em teste de repository, não em teste e2e do router — lição L-007.
 - **Notas de ambiente**: Postgres de dev local em `localhost:5433`. `bcrypt==4.0.1` fixado. `python-multipart==0.0.31`. N+1 de anexos resolvido via `AttachmentRepository.list_for_tasks` (batch). `Dockerfile` multi-stage + `entrypoint.sh` (migração automática) prontos. Rotas de task/anexo 100% aninhadas sob `/projects/{id}/tasks/{id}[/attachments/...]` (AD-013). Deploy real: EC2 única rodando backend (Docker) + Postgres (container) + Nginx servindo o frontend estático e fazendo proxy de `/api/*` — sem domínio, sem HTTPS, `COOKIE_SECURE=false` deliberado (ver `../.local.md`).
+
+### AD-018
+- **Decision**: Autorização de projeto ampliada via grupo (`groups-rbac`) é **aditiva**: `ProjectRepository.get_for_user`/`list_for_user` (estritos, só `user_id`) continuam existindo intactos e são os únicos usados por `ProjectService.rename`/`delete`. Dois métodos novos — `get_accessible_for_user`/`list_accessible_for_user` (`user_id == dono` OU membro do `group_id` do projeto) — cobrem leitura/listagem/tarefas/anexos, plugados num único ponto de extensão (`_get_owned_project_id` em `tasks.py`, renomeado `_get_accessible_project_id`, já reaproveitado por `attachments.py`).
+- **Reason**: Evita que a introdução de grupos altere silenciosamente o comportamento de renomear/excluir projeto (que a spec nunca pediu para abrir a Membro) — mantém o isolamento do v1 intacto pra quem nunca usa grupos, e concentra a extensão de acesso num só lugar em vez de espalhar checagens por múltiplos routers.
+- **Trade-off**: Dois pares de métodos (estrito vs. ampliado) em `ProjectRepository` em vez de um só — mais explícito sobre qual checagem cada operação usa, ao custo de mais uma assinatura de método pra manter.
+- **Scope**: Backend (`app/repositories/project_repository.py`, `app/api/routers/tasks.py`, `app/api/routers/attachments.py`).
+- **Date**: 2026-08-02
+- **Status**: active
+
+### AD-019
+- **Decision**: `generate_opaque_token()`/`hash_token()` extraídos para `app/core/security.py`; `AuthService` (refresh token, v1) e `GroupService` (convite de grupo, v2) usam as mesmas funções em vez de duplicar `secrets.token_urlsafe(32)` + `hashlib.sha256(...).hexdigest()`.
+- **Reason**: Duplicação real identificada durante o Design de `groups-rbac` — mesmo racional da extração de `BaseRepository` (AD-014): reaproveitar em vez de copiar um padrão de segurança que precisa ficar consistente nos dois lugares.
+- **Trade-off**: Nenhum — extração pura, sem mudança de comportamento no fluxo de refresh token existente (mesmos parâmetros, mesmo algoritmo).
+- **Scope**: Backend (`app/core/security.py`, `app/services/auth_service.py`, `app/services/group_service.py`).
+- **Date**: 2026-08-02
+- **Status**: active
