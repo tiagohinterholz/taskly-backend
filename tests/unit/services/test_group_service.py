@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, call
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +18,9 @@ from app.services.group_service import (
     InviteExpiredError,
     InviteNotFoundError,
     InviteRateLimitExceededError,
+    NotGroupMemberError,
     NotGroupOwnerError,
+    SoleOwnerCannotLeaveError,
 )
 
 
@@ -489,3 +491,133 @@ class TestListPendingInvites:
             await service.list_pending_invites(member_id, group_id, limit=50, offset=0)
 
         group_invite_repository.list_pending.assert_not_awaited()
+
+
+class TestRemoveMember:
+    async def test_remove_member_by_owner_removes_membership_and_commits(self) -> None:
+        service, group_repository, _, _, session = _make_service()
+        owner_id = uuid.uuid4()
+        group_id = uuid.uuid4()
+        target_id = uuid.uuid4()
+        group_repository.get_membership.return_value = _make_membership(
+            group_id, owner_id, GroupRole.OWNER
+        )
+
+        await service.remove_member(owner_id, group_id, target_id)
+
+        group_repository.remove_member.assert_awaited_once_with(group_id, target_id)
+        session.commit.assert_awaited_once()
+
+    async def test_remove_member_by_non_owner_raises_not_group_owner_error(self) -> None:
+        service, group_repository, _, _, session = _make_service()
+        member_id = uuid.uuid4()
+        group_id = uuid.uuid4()
+        group_repository.get_membership.return_value = _make_membership(
+            group_id, member_id, GroupRole.MEMBER
+        )
+
+        with pytest.raises(NotGroupOwnerError):
+            await service.remove_member(member_id, group_id, uuid.uuid4())
+
+        group_repository.remove_member.assert_not_awaited()
+        session.commit.assert_not_awaited()
+
+
+class TestLeave:
+    async def test_leave_as_sole_owner_raises_sole_owner_cannot_leave_error(self) -> None:
+        service, group_repository, _, _, session = _make_service()
+        owner_id = uuid.uuid4()
+        group_id = uuid.uuid4()
+        group_repository.get_membership.return_value = _make_membership(
+            group_id, owner_id, GroupRole.OWNER
+        )
+
+        with pytest.raises(SoleOwnerCannotLeaveError):
+            await service.leave(owner_id, group_id)
+
+        group_repository.remove_member.assert_not_awaited()
+        session.commit.assert_not_awaited()
+
+    async def test_leave_as_member_succeeds_and_commits(self) -> None:
+        service, group_repository, _, _, session = _make_service()
+        member_id = uuid.uuid4()
+        group_id = uuid.uuid4()
+        group_repository.get_membership.return_value = _make_membership(
+            group_id, member_id, GroupRole.MEMBER
+        )
+
+        await service.leave(member_id, group_id)
+
+        group_repository.remove_member.assert_awaited_once_with(group_id, member_id)
+        session.commit.assert_awaited_once()
+
+    async def test_leave_when_not_a_member_raises_group_not_found_error(self) -> None:
+        service, group_repository, _, _, session = _make_service()
+        group_repository.get_membership.return_value = None
+
+        with pytest.raises(GroupNotFoundError):
+            await service.leave(uuid.uuid4(), uuid.uuid4())
+
+        group_repository.remove_member.assert_not_awaited()
+        session.commit.assert_not_awaited()
+
+
+class TestTransferOwnership:
+    async def test_transfer_ownership_by_non_owner_raises_not_group_owner_error(self) -> None:
+        service, group_repository, _, _, session = _make_service()
+        member_id = uuid.uuid4()
+        group_id = uuid.uuid4()
+        group_repository.get_membership.return_value = _make_membership(
+            group_id, member_id, GroupRole.MEMBER
+        )
+
+        with pytest.raises(NotGroupOwnerError):
+            await service.transfer_ownership(member_id, group_id, uuid.uuid4())
+
+        group_repository.set_role.assert_not_awaited()
+        session.commit.assert_not_awaited()
+
+    async def test_transfer_ownership_to_non_member_raises_not_group_member_error(self) -> None:
+        service, group_repository, _, _, session = _make_service()
+        owner_id = uuid.uuid4()
+        group_id = uuid.uuid4()
+        new_owner_id = uuid.uuid4()
+
+        async def get_membership(group_id: uuid.UUID, user_id: uuid.UUID) -> GroupMembership | None:
+            if user_id == owner_id:
+                return _make_membership(group_id, owner_id, GroupRole.OWNER)
+            return None
+
+        group_repository.get_membership.side_effect = get_membership
+
+        with pytest.raises(NotGroupMemberError):
+            await service.transfer_ownership(owner_id, group_id, new_owner_id)
+
+        group_repository.set_role.assert_not_awaited()
+        session.commit.assert_not_awaited()
+
+    async def test_transfer_ownership_happy_path_demotes_old_owner_before_promoting_new_owner(
+        self,
+    ) -> None:
+        service, group_repository, _, _, session = _make_service()
+        owner_id = uuid.uuid4()
+        group_id = uuid.uuid4()
+        new_owner_id = uuid.uuid4()
+
+        async def get_membership(group_id: uuid.UUID, user_id: uuid.UUID) -> GroupMembership:
+            role = GroupRole.OWNER if user_id == owner_id else GroupRole.MEMBER
+            return _make_membership(group_id, user_id, role)
+
+        group_repository.get_membership.side_effect = get_membership
+
+        await service.transfer_ownership(owner_id, group_id, new_owner_id)
+
+        # GRP-09: exactly one owner after the swap — proving the ordering
+        # avoids a transient two-OWNER state that the DB's partial unique
+        # index would reject (see test_group_repository.py's set_role test,
+        # which requires this same demote-then-promote order for real).
+        assert group_repository.set_role.await_args_list == [
+            call(group_id, owner_id, GroupRole.MEMBER),
+            call(group_id, new_owner_id, GroupRole.OWNER),
+        ]
+        session.commit.assert_awaited_once()

@@ -63,6 +63,19 @@ class InviteRateLimitExceededError(Exception):
     """
 
 
+class NotGroupMemberError(Exception):
+    """Raised by transfer_ownership() when the proposed new owner has no
+    existing membership in the group.
+    """
+
+
+class SoleOwnerCannotLeaveError(Exception):
+    """Raised by leave() when the acting user is the group's Owner — a group
+    can never end up without an Owner, so the Owner must transfer ownership
+    first (GRP-08 AC3).
+    """
+
+
 class GroupService:
     """Group business rules: lifecycle (create/rename/delete), listing,
     invites, membership management, and project link/unlink. Repositories
@@ -188,6 +201,40 @@ class GroupService:
     def _record_invite_attempt(self, group_id: uuid.UUID, acting_user_id: uuid.UUID) -> None:
         key = (group_id, acting_user_id)
         self._invite_attempts.setdefault(key, []).append(datetime.now(timezone.utc))
+
+    async def remove_member(
+        self, acting_user_id: uuid.UUID, group_id: uuid.UUID, target_user_id: uuid.UUID
+    ) -> None:
+        await self._require_owner(acting_user_id, group_id)
+        await self._group_repository.remove_member(group_id, target_user_id)
+        await self._session.commit()
+
+    async def leave(self, acting_user_id: uuid.UUID, group_id: uuid.UUID) -> None:
+        membership = await self._group_repository.get_membership(group_id, acting_user_id)
+        if membership is None:
+            raise GroupNotFoundError(group_id)
+        if membership.role == GroupRole.OWNER:
+            raise SoleOwnerCannotLeaveError(group_id)
+        await self._group_repository.remove_member(group_id, acting_user_id)
+        await self._session.commit()
+
+    async def transfer_ownership(
+        self, acting_user_id: uuid.UUID, group_id: uuid.UUID, new_owner_user_id: uuid.UUID
+    ) -> None:
+        await self._require_owner(acting_user_id, group_id)
+        new_owner_membership = await self._group_repository.get_membership(
+            group_id, new_owner_user_id
+        )
+        if new_owner_membership is None:
+            raise NotGroupMemberError(new_owner_user_id)
+
+        # Demote the current owner FIRST, then promote the new owner: the
+        # DB's partial unique index (one OWNER row per group) is checked
+        # per-statement, so promoting before demoting would transiently
+        # create two OWNER rows and violate the constraint.
+        await self._group_repository.set_role(group_id, acting_user_id, GroupRole.MEMBER)
+        await self._group_repository.set_role(group_id, new_owner_user_id, GroupRole.OWNER)
+        await self._session.commit()
 
     async def _require_owner(
         self, acting_user_id: uuid.UUID, group_id: uuid.UUID
