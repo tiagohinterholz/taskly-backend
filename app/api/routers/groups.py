@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_current_user, get_db_session
 from app.api.pagination import Page, PaginationParams
 from app.models.group import Group
+from app.models.project import Project
 from app.models.user import User
 from app.repositories.group_invite_repository import GroupInviteRepository
 from app.repositories.group_repository import GroupRepository
@@ -23,8 +24,10 @@ from app.services.group_service import (
     InviteRateLimitExceededError,
     NotGroupMemberError,
     NotGroupOwnerError,
+    ProjectAlreadyLinkedError,
     SoleOwnerCannotLeaveError,
 )
+from app.services.project_service import ProjectNotFoundError
 
 # No blanket prefix on this router (unlike projects.py's `prefix="/projects"`):
 # most routes live under /groups/..., but accepting an invite
@@ -93,6 +96,19 @@ class GroupInviteCreateOut(GroupInviteOut):
 
 class TransferOwnershipRequest(BaseModel):
     new_owner_user_id: uuid.UUID
+
+
+class ProjectLinkOut(BaseModel):
+    """Minimal confirmation of a link/unlink call: just the fields that
+    actually changed, rather than the full ProjectOut shape (which doesn't
+    even expose group_id) — reused across both endpoints since both mutate
+    the same field.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    group_id: uuid.UUID | None
 
 
 # GroupService.create_invite() rate-limits per (group_id, owner_user_id) using
@@ -347,3 +363,47 @@ async def transfer_ownership(
             status_code=status.HTTP_404_NOT_FOUND, detail="user is not a member of this group"
         ) from exc
     return {"message": "ownership transferred"}
+
+
+@router.post("/groups/{group_id}/projects/{project_id}/link", response_model=ProjectLinkOut)
+async def link_project(
+    group_id: uuid.UUID,
+    project_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    group_service: GroupService = Depends(_get_group_service),
+) -> Project:
+    try:
+        return await group_service.link_project(user.id, group_id, project_id)
+    except GroupNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="group not found") from exc
+    except NotGroupOwnerError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="only the group owner can perform this action"
+        ) from exc
+    except ProjectNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="project not found") from exc
+    except ProjectAlreadyLinkedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="project already linked to another group"
+        ) from exc
+
+
+@router.post("/groups/{group_id}/projects/{project_id}/unlink", response_model=ProjectLinkOut)
+async def unlink_project(
+    group_id: uuid.UUID,
+    project_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    group_service: GroupService = Depends(_get_group_service),
+) -> Project:
+    try:
+        return await group_service.unlink_project(user.id, group_id, project_id)
+    except GroupNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="group not found") from exc
+    except NotGroupOwnerError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="only the group owner can perform this action"
+        ) from exc
+    except ProjectNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="project not linked to this group"
+        ) from exc

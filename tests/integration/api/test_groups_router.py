@@ -713,3 +713,122 @@ class TestTransferOwnership:
         roles_by_user = {item["user_id"]: item["role"] for item in members.json()["items"]}
         assert roles_by_user[str(new_owner_id)] == "owner"
         assert roles_by_user[str(owner_id)] == "member"
+
+
+class TestLinkProject:
+    async def test_link_own_project_returns_200_and_sets_group_id(self, client: AsyncClient) -> None:
+        await register_and_login(client, _unique_email("grp-link-owner"))
+        created_group = await client.post("/groups", json={"name": "Team"})
+        group_id = created_group.json()["id"]
+        created_project = await client.post("/projects", json={"name": "Owned project"})
+        project_id = created_project.json()["id"]
+
+        response = await client.post(f"/groups/{group_id}/projects/{project_id}/link")
+
+        assert response.status_code == 200
+        assert response.json()["group_id"] == group_id
+
+    async def test_link_by_non_owner_member_returns_403(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        owner_email = _unique_email("grp-link-403-owner")
+        await register_and_login(client, owner_email)
+        created_group = await client.post("/groups", json={"name": "Team"})
+        group_id = uuid.UUID(created_group.json()["id"])
+        created_project = await client.post("/projects", json={"name": "Owned project"})
+        project_id = created_project.json()["id"]
+        await client.post("/auth/logout")
+
+        member_id = await _register_and_get_id(client, _unique_email("grp-link-403-member"))
+        await GroupRepository(db_session).add_member(group_id, member_id, GroupRole.MEMBER)
+        await db_session.commit()
+
+        response = await client.post(f"/groups/{group_id}/projects/{project_id}/link")
+
+        assert response.status_code == 403
+
+    async def test_link_project_not_owned_by_acting_user_returns_404(
+        self, client: AsyncClient
+    ) -> None:
+        owner_email = _unique_email("grp-link-404-owner")
+        await register_and_login(client, owner_email)
+        created_group = await client.post("/groups", json={"name": "Team"})
+        group_id = created_group.json()["id"]
+        await client.post("/auth/logout")
+
+        await register_and_login(client, _unique_email("grp-link-404-other"))
+        created_project = await client.post("/projects", json={"name": "Other's project"})
+        project_id = created_project.json()["id"]
+        await client.post("/auth/logout")
+
+        await _login(client, owner_email)
+        response = await client.post(f"/groups/{group_id}/projects/{project_id}/link")
+
+        assert response.status_code == 404
+
+    async def test_link_already_linked_project_returns_409(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        await register_and_login(client, _unique_email("grp-link-409-owner"))
+        first_group = await client.post("/groups", json={"name": "First team"})
+        first_group_id = uuid.UUID(first_group.json()["id"])
+        second_group = await client.post("/groups", json={"name": "Second team"})
+        second_group_id = second_group.json()["id"]
+        created_project = await client.post("/projects", json={"name": "Owned project"})
+        project_id = uuid.UUID(created_project.json()["id"])
+        await ProjectRepository(db_session).set_group(project_id, first_group_id)
+        await db_session.commit()
+
+        response = await client.post(f"/groups/{second_group_id}/projects/{project_id}/link")
+
+        assert response.status_code == 409
+
+
+class TestUnlinkProject:
+    async def test_unlink_linked_project_returns_200_and_clears_group_id(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        await register_and_login(client, _unique_email("grp-unlink-owner"))
+        created_group = await client.post("/groups", json={"name": "Team"})
+        group_id = uuid.UUID(created_group.json()["id"])
+        created_project = await client.post("/projects", json={"name": "Owned project"})
+        project_id = uuid.UUID(created_project.json()["id"])
+        await ProjectRepository(db_session).set_group(project_id, group_id)
+        await db_session.commit()
+
+        response = await client.post(f"/groups/{group_id}/projects/{project_id}/unlink")
+
+        assert response.status_code == 200
+        assert response.json()["group_id"] is None
+
+    async def test_unlink_by_non_owner_member_returns_403(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        owner_email = _unique_email("grp-unlink-403-owner")
+        await register_and_login(client, owner_email)
+        created_group = await client.post("/groups", json={"name": "Team"})
+        group_id = uuid.UUID(created_group.json()["id"])
+        created_project = await client.post("/projects", json={"name": "Owned project"})
+        project_id = uuid.UUID(created_project.json()["id"])
+        await ProjectRepository(db_session).set_group(project_id, group_id)
+        await db_session.commit()
+        await client.post("/auth/logout")
+
+        member_id = await _register_and_get_id(client, _unique_email("grp-unlink-403-member"))
+        await GroupRepository(db_session).add_member(group_id, member_id, GroupRole.MEMBER)
+        await db_session.commit()
+
+        response = await client.post(f"/groups/{group_id}/projects/{project_id}/unlink")
+
+        assert response.status_code == 403
+
+    async def test_unlink_project_not_linked_to_group_returns_404(self, client: AsyncClient) -> None:
+        await register_and_login(client, _unique_email("grp-unlink-404-owner"))
+        created_group = await client.post("/groups", json={"name": "Team"})
+        group_id = created_group.json()["id"]
+        created_project = await client.post("/projects", json={"name": "Unlinked project"})
+        project_id = created_project.json()["id"]
+
+        response = await client.post(f"/groups/{group_id}/projects/{project_id}/unlink")
+
+        assert response.status_code == 404
