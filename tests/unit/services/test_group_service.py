@@ -1,18 +1,23 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.group import Group, GroupMembership, GroupRole
+from app.models.group import Group, GroupInvite, GroupMembership, GroupRole
 from app.repositories.group_invite_repository import GroupInviteRepository
 from app.repositories.group_repository import GroupRepository
 from app.repositories.project_repository import ProjectRepository
 from app.services.group_service import (
+    AlreadyMemberError,
     GroupHasProjectsError,
     GroupNotFoundError,
     GroupService,
+    InviteAlreadyUsedError,
+    InviteExpiredError,
+    InviteNotFoundError,
+    InviteRateLimitExceededError,
     NotGroupOwnerError,
 )
 
@@ -48,6 +53,25 @@ def _make_membership(
         group_id=group_id,
         user_id=user_id,
         role=role,
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+def _make_invite(
+    group_id: uuid.UUID,
+    created_by_user_id: uuid.UUID | None = None,
+    expires_at: datetime | None = None,
+    consumed_at: datetime | None = None,
+    revoked_at: datetime | None = None,
+) -> GroupInvite:
+    return GroupInvite(
+        id=uuid.uuid4(),
+        group_id=group_id,
+        created_by_user_id=created_by_user_id or uuid.uuid4(),
+        token_hash="irrelevant-for-tests",
+        expires_at=expires_at or (datetime.now(timezone.utc) + timedelta(days=7)),
+        consumed_at=consumed_at,
+        revoked_at=revoked_at,
         created_at=datetime.now(timezone.utc),
     )
 
@@ -217,3 +241,251 @@ class TestListMembers:
             await service.list_members(uuid.uuid4(), uuid.uuid4(), limit=50, offset=0)
 
         group_repository.list_members.assert_not_awaited()
+
+
+class TestCreateInvite:
+    async def test_create_invite_by_owner_returns_invite_and_plaintext_token_and_commits(
+        self,
+    ) -> None:
+        service, group_repository, group_invite_repository, _, session = _make_service()
+        owner_id = uuid.uuid4()
+        group_id = uuid.uuid4()
+        group_repository.get_membership.return_value = _make_membership(
+            group_id, owner_id, GroupRole.OWNER
+        )
+        created_invite = _make_invite(group_id, created_by_user_id=owner_id)
+        group_invite_repository.create.return_value = created_invite
+
+        invite, plain_token = await service.create_invite(owner_id, group_id)
+
+        assert invite is created_invite
+        assert isinstance(plain_token, str) and len(plain_token) > 0
+        # GRP-02: the hash persisted must never equal the plain token returned
+        create_call = group_invite_repository.create.call_args
+        assert create_call.args[0] == group_id
+        assert create_call.args[1] == owner_id
+        assert create_call.args[2] != plain_token
+        session.commit.assert_awaited_once()
+
+    async def test_create_invite_expires_in_seven_days(self) -> None:
+        service, group_repository, group_invite_repository, _, _ = _make_service()
+        owner_id = uuid.uuid4()
+        group_id = uuid.uuid4()
+        group_repository.get_membership.return_value = _make_membership(
+            group_id, owner_id, GroupRole.OWNER
+        )
+        group_invite_repository.create.return_value = _make_invite(group_id)
+
+        before = datetime.now(timezone.utc)
+        await service.create_invite(owner_id, group_id)
+        after = datetime.now(timezone.utc)
+
+        expires_at = group_invite_repository.create.call_args.args[3]
+        assert before + timedelta(days=7) <= expires_at <= after + timedelta(days=7)
+
+    async def test_create_invite_by_non_owner_raises_not_group_owner_error(self) -> None:
+        service, group_repository, group_invite_repository, _, session = _make_service()
+        member_id = uuid.uuid4()
+        group_id = uuid.uuid4()
+        group_repository.get_membership.return_value = _make_membership(
+            group_id, member_id, GroupRole.MEMBER
+        )
+
+        with pytest.raises(NotGroupOwnerError):
+            await service.create_invite(member_id, group_id)
+
+        group_invite_repository.create.assert_not_awaited()
+        session.commit.assert_not_awaited()
+
+    async def test_eleventh_invite_within_window_is_rate_limited(self) -> None:
+        service, group_repository, group_invite_repository, _, _ = _make_service()
+        owner_id = uuid.uuid4()
+        group_id = uuid.uuid4()
+        group_repository.get_membership.return_value = _make_membership(
+            group_id, owner_id, GroupRole.OWNER
+        )
+        group_invite_repository.create.return_value = _make_invite(group_id)
+
+        for _ in range(10):
+            await service.create_invite(owner_id, group_id)
+
+        # GRP-02 edge case: the 11th invite in the rolling 1h window is blocked
+        with pytest.raises(InviteRateLimitExceededError):
+            await service.create_invite(owner_id, group_id)
+
+    async def test_rate_limit_is_scoped_per_group(self) -> None:
+        service, group_repository, group_invite_repository, _, _ = _make_service()
+        owner_id = uuid.uuid4()
+        group_id_a = uuid.uuid4()
+        group_id_b = uuid.uuid4()
+        group_repository.get_membership.side_effect = lambda group_id, user_id: _make_membership(
+            group_id, user_id, GroupRole.OWNER
+        )
+        group_invite_repository.create.side_effect = lambda group_id, *a: _make_invite(group_id)
+
+        for _ in range(10):
+            await service.create_invite(owner_id, group_id_a)
+
+        # Group B's rate limit is independent of group A's
+        invite, _token = await service.create_invite(owner_id, group_id_b)
+        assert invite.group_id == group_id_b
+
+
+class TestAcceptInvite:
+    async def test_accept_invite_valid_token_creates_membership_and_marks_consumed(self) -> None:
+        service, group_repository, group_invite_repository, _, session = _make_service()
+        group_id = uuid.uuid4()
+        acting_user_id = uuid.uuid4()
+        invite = _make_invite(group_id)
+        group_invite_repository.get_by_hash.return_value = invite
+        group_repository.get_membership.return_value = None
+        group_repository.get_by_id.return_value = _make_group("Team")
+
+        result = await service.accept_invite(acting_user_id, "plain-token")
+
+        group_repository.add_member.assert_awaited_once_with(
+            group_id, acting_user_id, GroupRole.MEMBER
+        )
+        group_invite_repository.mark_consumed.assert_awaited_once_with(invite.id)
+        assert result is group_repository.get_by_id.return_value
+        session.commit.assert_awaited_once()
+
+    async def test_accept_invite_already_consumed_raises_already_used_error(self) -> None:
+        service, group_repository, group_invite_repository, _, session = _make_service()
+        group_id = uuid.uuid4()
+        invite = _make_invite(group_id, consumed_at=datetime.now(timezone.utc))
+        group_invite_repository.get_by_hash.return_value = invite
+
+        with pytest.raises(InviteAlreadyUsedError):
+            await service.accept_invite(uuid.uuid4(), "plain-token")
+
+        group_repository.add_member.assert_not_awaited()
+        session.commit.assert_not_awaited()
+
+    async def test_accept_invite_expired_raises_invite_expired_error(self) -> None:
+        service, group_repository, group_invite_repository, _, session = _make_service()
+        group_id = uuid.uuid4()
+        invite = _make_invite(
+            group_id, expires_at=datetime.now(timezone.utc) - timedelta(seconds=1)
+        )
+        group_invite_repository.get_by_hash.return_value = invite
+
+        with pytest.raises(InviteExpiredError):
+            await service.accept_invite(uuid.uuid4(), "plain-token")
+
+        group_repository.add_member.assert_not_awaited()
+        session.commit.assert_not_awaited()
+
+    async def test_accept_invite_unknown_token_raises_invite_not_found_error(self) -> None:
+        service, group_repository, group_invite_repository, _, session = _make_service()
+        group_invite_repository.get_by_hash.return_value = None
+
+        with pytest.raises(InviteNotFoundError):
+            await service.accept_invite(uuid.uuid4(), "unknown-token")
+
+        group_repository.add_member.assert_not_awaited()
+        session.commit.assert_not_awaited()
+
+    async def test_accept_invite_revoked_token_raises_invite_not_found_error(self) -> None:
+        service, group_repository, group_invite_repository, _, session = _make_service()
+        group_id = uuid.uuid4()
+        invite = _make_invite(group_id, revoked_at=datetime.now(timezone.utc))
+        group_invite_repository.get_by_hash.return_value = invite
+
+        # GRP-03 AC: revoked and unknown tokens raise the same exception,
+        # so a router can't distinguish "revoked" from "never existed"
+        with pytest.raises(InviteNotFoundError):
+            await service.accept_invite(uuid.uuid4(), "revoked-token")
+
+        group_repository.add_member.assert_not_awaited()
+        session.commit.assert_not_awaited()
+
+    async def test_accept_invite_already_a_member_raises_already_member_error(self) -> None:
+        service, group_repository, group_invite_repository, _, session = _make_service()
+        group_id = uuid.uuid4()
+        acting_user_id = uuid.uuid4()
+        invite = _make_invite(group_id)
+        group_invite_repository.get_by_hash.return_value = invite
+        group_repository.get_membership.return_value = _make_membership(group_id, acting_user_id)
+
+        with pytest.raises(AlreadyMemberError):
+            await service.accept_invite(acting_user_id, "plain-token")
+
+        group_repository.add_member.assert_not_awaited()
+        session.commit.assert_not_awaited()
+
+
+class TestRevokeInvite:
+    async def test_revoke_invite_by_owner_marks_revoked_and_commits(self) -> None:
+        service, group_repository, group_invite_repository, _, session = _make_service()
+        owner_id = uuid.uuid4()
+        group_id = uuid.uuid4()
+        invite = _make_invite(group_id)
+        group_repository.get_membership.return_value = _make_membership(
+            group_id, owner_id, GroupRole.OWNER
+        )
+        group_invite_repository.get_by_id.return_value = invite
+
+        await service.revoke_invite(owner_id, group_id, invite.id)
+
+        group_invite_repository.mark_revoked.assert_awaited_once_with(invite.id)
+        session.commit.assert_awaited_once()
+
+    async def test_revoke_invite_by_non_owner_raises_not_group_owner_error(self) -> None:
+        service, group_repository, group_invite_repository, _, session = _make_service()
+        member_id = uuid.uuid4()
+        group_id = uuid.uuid4()
+        group_repository.get_membership.return_value = _make_membership(
+            group_id, member_id, GroupRole.MEMBER
+        )
+
+        with pytest.raises(NotGroupOwnerError):
+            await service.revoke_invite(member_id, group_id, uuid.uuid4())
+
+        group_invite_repository.mark_revoked.assert_not_awaited()
+        session.commit.assert_not_awaited()
+
+    async def test_revoked_invite_then_fails_accept_with_invite_not_found_error(self) -> None:
+        # GRP-10: "revoked token then fails accept" — proven at the
+        # accept_invite() level, since revoke_invite()'s only job is to set
+        # revoked_at (already asserted above); accept_invite() treats any
+        # invite with revoked_at set as not-found (tested in TestAcceptInvite
+        # too, repeated here to document the end-to-end edge case by name).
+        service, group_repository, group_invite_repository, _, _ = _make_service()
+        group_id = uuid.uuid4()
+        revoked_invite = _make_invite(group_id, revoked_at=datetime.now(timezone.utc))
+        group_invite_repository.get_by_hash.return_value = revoked_invite
+
+        with pytest.raises(InviteNotFoundError):
+            await service.accept_invite(uuid.uuid4(), "revoked-token")
+
+
+class TestListPendingInvites:
+    async def test_list_pending_invites_by_owner_returns_items_and_total(self) -> None:
+        service, group_repository, group_invite_repository, _, _ = _make_service()
+        owner_id = uuid.uuid4()
+        group_id = uuid.uuid4()
+        group_repository.get_membership.return_value = _make_membership(
+            group_id, owner_id, GroupRole.OWNER
+        )
+        invite = _make_invite(group_id)
+        group_invite_repository.list_pending.return_value = ([invite], 1)
+
+        items, total = await service.list_pending_invites(owner_id, group_id, limit=50, offset=0)
+
+        assert items == [invite]
+        assert total == 1
+        group_invite_repository.list_pending.assert_awaited_once_with(group_id, 50, 0)
+
+    async def test_list_pending_invites_by_non_owner_raises_not_group_owner_error(self) -> None:
+        service, group_repository, group_invite_repository, _, _ = _make_service()
+        member_id = uuid.uuid4()
+        group_id = uuid.uuid4()
+        group_repository.get_membership.return_value = _make_membership(
+            group_id, member_id, GroupRole.MEMBER
+        )
+
+        with pytest.raises(NotGroupOwnerError):
+            await service.list_pending_invites(member_id, group_id, limit=50, offset=0)
+
+        group_invite_repository.list_pending.assert_not_awaited()
