@@ -1,5 +1,3 @@
-import hashlib
-import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -7,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import JWTService, PasswordHasher
+from app.core.security import JWTService, PasswordHasher, generate_opaque_token, hash_token
 from app.models.user import User
 from app.repositories.refresh_token_repository import RefreshTokenRepository
 from app.repositories.user_repository import UserRepository
@@ -94,7 +92,7 @@ class AuthService:
         return token_pair
 
     async def refresh(self, refresh_token: str) -> TokenPair:
-        token_hash = self._hash_token(refresh_token)
+        token_hash = hash_token(refresh_token)
         record = await self._refresh_token_repository.get_by_hash(token_hash)
         now = datetime.now(timezone.utc)
         if record is None or record.revoked_at is not None or record.expires_at < now:
@@ -106,7 +104,7 @@ class AuthService:
         return token_pair
 
     async def logout(self, refresh_token: str) -> None:
-        token_hash = self._hash_token(refresh_token)
+        token_hash = hash_token(refresh_token)
         record = await self._refresh_token_repository.get_by_hash(token_hash)
         if record is None:
             return
@@ -115,15 +113,11 @@ class AuthService:
 
     async def _issue_token_pair(self, user_id: uuid.UUID) -> TokenPair:
         access_token = self._jwt_service.encode(user_id, ttl=self._access_token_ttl)
-        refresh_token_plain = secrets.token_urlsafe(32)
-        token_hash = self._hash_token(refresh_token_plain)
+        refresh_token_plain = generate_opaque_token()
+        token_hash = hash_token(refresh_token_plain)
         expires_at = datetime.now(timezone.utc) + self._refresh_token_ttl
         await self._refresh_token_repository.create(user_id, token_hash, expires_at)
         return TokenPair(access_token=access_token, refresh_token=refresh_token_plain)
-
-    @staticmethod
-    def _hash_token(token: str) -> str:
-        return hashlib.sha256(token.encode()).hexdigest()
 
     def _check_rate_limit(self, email: str) -> None:
         now = datetime.now(timezone.utc)

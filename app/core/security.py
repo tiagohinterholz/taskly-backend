@@ -1,3 +1,5 @@
+import hashlib
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -5,6 +7,16 @@ import jwt
 from passlib.context import CryptContext
 
 _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def generate_opaque_token() -> str:
+    """Generate a URL-safe opaque token (refresh token, invite token, ...)."""
+    return secrets.token_urlsafe(32)
+
+
+def hash_token(token: str) -> str:
+    """Hash an opaque token for at-rest storage (SHA-256 hex digest)."""
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 class PasswordHasher:
