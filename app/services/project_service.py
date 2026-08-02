@@ -32,8 +32,10 @@ class ProjectService:
         await self._session.commit()
         return project
 
-    async def list_for_user(self, user_id: uuid.UUID) -> list[Project]:
-        return await self._project_repository.list_for_user(user_id)
+    async def list_for_user(
+        self, user_id: uuid.UUID, limit: int, offset: int
+    ) -> tuple[list[Project], int]:
+        return await self._project_repository.list_for_user(user_id, limit, offset)
 
     async def rename(self, user_id: uuid.UUID, project_id: uuid.UUID, name: str) -> Project:
         owned = await self._project_repository.get_for_user(project_id, user_id)

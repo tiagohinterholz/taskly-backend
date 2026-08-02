@@ -98,6 +98,6 @@ class TestFullStackSmokeWalk:
 
         list_response = await wired_client.get(f"/projects/{project_id}/tasks")
         assert list_response.status_code == 200, list_response.text
-        tasks = list_response.json()
+        tasks = list_response.json()["items"]
         assert len(tasks) == 1
         assert tasks[0]["title"] == "Wiring smoke task"

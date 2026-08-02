@@ -37,8 +37,12 @@ class TestListProjects:
         response = await client.get("/projects")
 
         assert response.status_code == 200
-        names = [p["name"] for p in response.json()]
+        body = response.json()
+        names = [p["name"] for p in body["items"]]
         assert names == ["A's project"]
+        assert body["total"] == 1
+        assert body["limit"] == 50
+        assert body["offset"] == 0
 
     async def test_list_projects_excludes_other_users_projects(self, client: AsyncClient) -> None:
         await register_and_login(client, _unique_email("proj-list-b1"))
@@ -49,7 +53,49 @@ class TestListProjects:
         response = await client.get("/projects")
 
         assert response.status_code == 200
-        assert response.json() == []
+        body = response.json()
+        assert body["items"] == []
+        assert body["total"] == 0
+
+    async def test_list_projects_respects_limit_and_offset(self, client: AsyncClient) -> None:
+        await register_and_login(client, _unique_email("proj-list-page"))
+        for name in ["P1", "P2", "P3"]:
+            created = await client.post("/projects", json={"name": name})
+            assert created.status_code == 201
+
+        first_page = await client.get("/projects", params={"limit": 2, "offset": 0})
+        second_page = await client.get("/projects", params={"limit": 2, "offset": 2})
+
+        assert first_page.status_code == 200
+        first_body = first_page.json()
+        assert len(first_body["items"]) == 2
+        assert first_body["total"] == 3
+        assert first_body["limit"] == 2
+        assert first_body["offset"] == 0
+
+        second_body = second_page.json()
+        assert len(second_body["items"]) == 1
+        assert second_body["total"] == 3
+        assert second_body["offset"] == 2
+
+        first_names = {p["name"] for p in first_body["items"]}
+        second_names = {p["name"] for p in second_body["items"]}
+        assert first_names.isdisjoint(second_names)
+        assert first_names | second_names == {"P1", "P2", "P3"}
+
+    async def test_list_projects_limit_over_100_returns_422(self, client: AsyncClient) -> None:
+        await register_and_login(client, _unique_email("proj-list-limit-422"))
+
+        response = await client.get("/projects", params={"limit": 101})
+
+        assert response.status_code == 422
+
+    async def test_list_projects_negative_offset_returns_422(self, client: AsyncClient) -> None:
+        await register_and_login(client, _unique_email("proj-list-offset-422"))
+
+        response = await client.get("/projects", params={"offset": -1})
+
+        assert response.status_code == 422
 
 
 class TestRenameProject:
@@ -105,7 +151,7 @@ class TestDeleteProject:
 
         assert response.status_code == 204
         listing = await client.get("/projects")
-        assert listing.json() == []
+        assert listing.json()["items"] == []
 
     async def test_delete_other_users_project_returns_404(self, client: AsyncClient) -> None:
         await register_and_login(client, _unique_email("proj-delete-a"))

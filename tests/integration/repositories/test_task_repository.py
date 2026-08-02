@@ -58,7 +58,7 @@ class TestTaskRepositoryCreate:
         # IDs are captured above (project_id) since attribute access after
         # expire_all() would trigger a sync lazy-load, unsupported here.
         db_session.expire_all()
-        reloaded = await repo.list_for_project(project_id)
+        reloaded, _ = await repo.list_for_project(project_id, limit=50, offset=0)
         assert reloaded[0].tags == ["backend", "urgent"]
         assert reloaded[0].status == TaskStatus.IN_PROGRESS
 
@@ -74,9 +74,10 @@ class TestTaskRepositoryListForProject:
         task_a = await repo.create(project_id=project_a.id, title="A task")
         await repo.create(project_id=project_b.id, title="B task")
 
-        tasks = await repo.list_for_project(project_a.id)
+        tasks, total = await repo.list_for_project(project_a.id, limit=50, offset=0)
 
         assert [t.id for t in tasks] == [task_a.id]
+        assert total == 1
 
 
 class TestTaskRepositoryGetForProject:
@@ -151,7 +152,7 @@ class TestTaskRepositoryUpdate:
         # expire_all() forces the next read to hit Postgres instead of trusting
         # the session's identity map, proving the change was actually flushed.
         db_session.expire_all()
-        reloaded = await repo.list_for_project(project_id)
+        reloaded, _ = await repo.list_for_project(project_id, limit=50, offset=0)
         assert reloaded[0].title == "Updated title"
 
     async def test_update_status_round_trips_through_read(self, db_session: AsyncSession) -> None:
@@ -163,7 +164,7 @@ class TestTaskRepositoryUpdate:
         await repo.update(task.id, status=TaskStatus.DONE)
 
         db_session.expire_all()
-        reloaded = await repo.list_for_project(project_id)
+        reloaded, _ = await repo.list_for_project(project_id, limit=50, offset=0)
         assert reloaded[0].status == TaskStatus.DONE
 
     async def test_update_tags_round_trips_through_read(self, db_session: AsyncSession) -> None:
@@ -175,7 +176,7 @@ class TestTaskRepositoryUpdate:
         await repo.update(task.id, tags=["one", "two", "three"])
 
         db_session.expire_all()
-        reloaded = await repo.list_for_project(project_id)
+        reloaded, _ = await repo.list_for_project(project_id, limit=50, offset=0)
         assert reloaded[0].tags == ["one", "two", "three"]
 
 
@@ -187,5 +188,6 @@ class TestTaskRepositoryDelete:
 
         await repo.delete(task.id)
 
-        remaining = await repo.list_for_project(project.id)
+        remaining, total = await repo.list_for_project(project.id, limit=50, offset=0)
         assert remaining == []
+        assert total == 0

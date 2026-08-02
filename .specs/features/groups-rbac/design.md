@@ -44,6 +44,7 @@ graph TD
 | `_get_owned_project_id` (helper único reaproveitado por tasks+attachments) | `app/api/routers/tasks.py:119`, importado por `attachments.py:8` | Único ponto de checagem de acesso a projeto pra tarefas/anexos — será ampliado aqui (ver AD proposto abaixo), sem tocar nos routers individuais de task/attachment. |
 | Rate limit em memória compartilhada (dict a nível de módulo injetado no service) | `app/api/routers/auth.py` (`_shared_failed_attempts`) | Mesmo padrão pro rate limit de geração de convite — ver Risks & Concerns (limitação já conhecida e aceita, não uma regressão nova). |
 | `ProjectCreateRequest.name` (`Field(min_length=1, max_length=100)`) | `app/api/routers/projects.py:18` | Mesmo limite pro nome do grupo. |
+| `PaginationParams`/`Page[T]` (AD-021, adicionado por trabalho paralelo antes desta feature retomar) | `app/api/pagination.py` | Reaproveitado por `GET /groups`, `GET /groups/{id}/members`, `GET /groups/{id}/invites` — nenhuma implementação de paginação própria, só consumir o componente já genérico. |
 
 ### Integration Points
 
@@ -72,8 +73,8 @@ graph TD
 - **Interfaces**:
   - `create(name, owner_user_id) -> Group` — cria o grupo e a membership Owner na mesma operação.
   - `get_membership(group_id, user_id) -> GroupMembership | None`
-  - `list_members(group_id) -> list[GroupMembership]`
-  - `list_for_user(user_id) -> list[tuple[Group, GroupRole]]`
+  - `list_members(group_id, limit, offset) -> tuple[list[GroupMembership], int]` — paginado por AD-021 (`app/api/pagination.py`'s `PaginationParams`/`Page[T]`, mesmo padrão de `GET /projects`).
+  - `list_for_user(user_id, limit, offset) -> tuple[list[tuple[Group, GroupRole]], int]` — paginado (AD-021).
   - `add_member(group_id, user_id, role) -> GroupMembership`
   - `remove_member(group_id, user_id) -> None`
   - `set_role(group_id, user_id, role) -> None` — usado pela transferência de posse (2 chamadas na mesma transação: novo owner, antigo owner vira member).
@@ -88,7 +89,7 @@ graph TD
 - **Interfaces**:
   - `create(group_id, created_by_user_id, token_hash, expires_at) -> GroupInvite`
   - `get_by_hash(token_hash) -> GroupInvite | None`
-  - `list_pending(group_id) -> list[GroupInvite]` (não consumido, não revogado, não expirado)
+  - `list_pending(group_id, limit, offset) -> tuple[list[GroupInvite], int]` (não consumido, não revogado, não expirado) — paginado (AD-021).
   - `mark_consumed(invite_id) -> None`
   - `mark_revoked(invite_id) -> None`
 - **Reuses**: `BaseRepository`; espelha `RefreshTokenRepository` linha a linha.
@@ -101,12 +102,12 @@ graph TD
   - `create(owner_user_id, name) -> Group`
   - `rename(acting_user_id, group_id, name) -> Group`
   - `delete(acting_user_id, group_id) -> None` — levanta `GroupHasProjectsError` se `count_linked_projects > 0` (GRP-12).
-  - `list_for_user(user_id) -> list[GroupWithRole]`
-  - `list_members(acting_user_id, group_id) -> list[GroupMembership]`
+  - `list_for_user(user_id, limit, offset) -> Page[GroupWithRole]`
+  - `list_members(acting_user_id, group_id, limit, offset) -> Page[GroupMembership]`
   - `create_invite(acting_user_id, group_id) -> tuple[GroupInvite, str]` — retorna o registro + o token em texto plano (única vez que existe fora do hash).
   - `accept_invite(acting_user_id, token) -> Group`
   - `revoke_invite(acting_user_id, group_id, invite_id) -> None`
-  - `list_pending_invites(acting_user_id, group_id) -> list[GroupInvite]`
+  - `list_pending_invites(acting_user_id, group_id, limit, offset) -> Page[GroupInvite]`
   - `remove_member(acting_user_id, group_id, target_user_id) -> None`
   - `leave(acting_user_id, group_id) -> None` — levanta `SoleOwnerCannotLeaveError` se `acting_user_id` for o Owner (GRP-08 AC3).
   - `transfer_ownership(acting_user_id, group_id, new_owner_user_id) -> None` — atômico: `set_role` novo owner + `set_role` antigo owner vira member, no mesmo `commit()`.
@@ -121,25 +122,25 @@ graph TD
 - **Location**: `app/repositories/project_repository.py`
 - **Interfaces (adição)**:
   - `get_accessible_for_user(project_id, user_id) -> Project | None` — `WHERE project.user_id = :user_id OR (project.group_id IS NOT NULL AND EXISTS (membership do user_id no project.group_id))`.
-  - `list_accessible_for_user(user_id) -> list[Project]` — mesma condição, sem filtro de ID único. Substitui a chamada que `ProjectService.list_for_user` já fazia em `list_for_user` (renomeado).
-- **Reuses**: Mesmo estilo de query dos métodos existentes (`select`/`func`).
+  - `list_accessible_for_user(user_id, limit, offset) -> tuple[list[Project], int]` — mesma condição, sem filtro de ID único. Substitui a chamada que `ProjectService.list_for_user` já fazia em `list_for_user` (renomeado). **Nota (AD-021, aplicado antes desta fase por trabalho paralelo)**: a paginação já existe no `list_for_user` atual (estrito) no momento em que esta task rodar — esta extensão preserva `limit`/`offset` ao renomear/ampliar, não os reintroduz do zero.
+- **Reuses**: Mesmo estilo de query dos métodos existentes (`select`/`func`); `PaginationParams`/`Page[T]` de `app/api/pagination.py` (AD-021).
 
 ### `app/api/routers/groups.py`
 
 - **Purpose**: Expõe os 13 endpoints de GRP-01 a GRP-15 (P1+P2+P3).
 - **Location**: `app/api/routers/groups.py`
-- **Reuses**: Mesmo esqueleto de `projects.py` (Pydantic request/response models, `Depends(get_current_user)`, factory `_get_group_service`, `try/except` mapeando exceção de domínio → `HTTPException`).
+- **Reuses**: Mesmo esqueleto de `projects.py` (Pydantic request/response models, `Depends(get_current_user)`, factory `_get_group_service`, `try/except` mapeando exceção de domínio → `HTTPException`); `PaginationParams`/`Page[T]` de `app/api/pagination.py` (AD-021) nas 3 rotas de listagem.
 - **Rotas** (prefixo `/groups`, mais uma rota solta `/invites/{token}/accept` já que aceitar não pertence a um `group_id` conhecido de antemão):
   - `POST /groups` (GRP-01)
-  - `GET /groups` (GRP-14)
+  - `GET /groups` (GRP-14) — `response_model=Page[GroupOut]`, aceita `PaginationParams`
   - `PATCH /groups/{group_id}` (GRP-13)
   - `DELETE /groups/{group_id}` (GRP-12)
-  - `GET /groups/{group_id}/members` (GRP-06)
+  - `GET /groups/{group_id}/members` (GRP-06) — `response_model=Page[MemberOut]`, aceita `PaginationParams`
   - `DELETE /groups/{group_id}/members/{user_id}` (GRP-07)
   - `POST /groups/{group_id}/leave` (GRP-08)
   - `POST /groups/{group_id}/transfer-ownership` (GRP-09)
   - `POST /groups/{group_id}/invites` (GRP-02)
-  - `GET /groups/{group_id}/invites` (GRP-15)
+  - `GET /groups/{group_id}/invites` (GRP-15) — `response_model=Page[GroupInviteOut]`, aceita `PaginationParams`
   - `DELETE /groups/{group_id}/invites/{invite_id}` (GRP-10)
   - `POST /invites/{token}/accept` (GRP-03)
   - `POST /groups/{group_id}/projects/{project_id}/link` (GRP-04)

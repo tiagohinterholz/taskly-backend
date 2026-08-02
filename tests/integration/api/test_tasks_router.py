@@ -94,8 +94,12 @@ class TestListTasks:
         response = await client.get(f"/projects/{project_id}/tasks")
 
         assert response.status_code == 200
-        titles = {t["title"] for t in response.json()}
+        body = response.json()
+        titles = {t["title"] for t in body["items"]}
         assert titles == {"Task 1", "Task 2"}
+        assert body["total"] == 2
+        assert body["limit"] == 50
+        assert body["offset"] == 0
 
     async def test_list_tasks_for_other_users_project_returns_404(self, client: AsyncClient) -> None:
         await register_and_login(client, _unique_email("task-list-a"))
@@ -106,6 +110,78 @@ class TestListTasks:
         response = await client.get(f"/projects/{project_id}/tasks")
 
         assert response.status_code == 404
+
+    async def test_list_tasks_respects_limit_and_offset(self, client: AsyncClient) -> None:
+        await register_and_login(client, _unique_email("task-list-page"))
+        project_id = await _create_project(client)
+        for title in ["T1", "T2", "T3"]:
+            await client.post(f"/projects/{project_id}/tasks", json={"title": title})
+
+        first_page = await client.get(
+            f"/projects/{project_id}/tasks", params={"limit": 2, "offset": 0}
+        )
+        second_page = await client.get(
+            f"/projects/{project_id}/tasks", params={"limit": 2, "offset": 2}
+        )
+
+        assert first_page.status_code == 200
+        first_body = first_page.json()
+        assert len(first_body["items"]) == 2
+        assert first_body["total"] == 3
+        assert first_body["limit"] == 2
+        assert first_body["offset"] == 0
+
+        second_body = second_page.json()
+        assert len(second_body["items"]) == 1
+        assert second_body["total"] == 3
+        assert second_body["offset"] == 2
+
+        first_titles = {t["title"] for t in first_body["items"]}
+        second_titles = {t["title"] for t in second_body["items"]}
+        assert first_titles.isdisjoint(second_titles)
+        assert first_titles | second_titles == {"T1", "T2", "T3"}
+
+    async def test_list_tasks_filters_by_status(self, client: AsyncClient) -> None:
+        await register_and_login(client, _unique_email("task-list-status"))
+        project_id = await _create_project(client)
+        created_done = await client.post(
+            f"/projects/{project_id}/tasks", json={"title": "Done task"}
+        )
+        done_task_id = created_done.json()["id"]
+        await client.patch(
+            f"/projects/{project_id}/tasks/{done_task_id}", json={"status": "done"}
+        )
+        await client.post(f"/projects/{project_id}/tasks", json={"title": "Not started task"})
+
+        response = await client.get(
+            f"/projects/{project_id}/tasks", params={"status": "done"}
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["total"] == 1
+        assert [t["id"] for t in body["items"]] == [done_task_id]
+        assert all(t["status"] == "done" for t in body["items"])
+
+    async def test_list_tasks_limit_over_100_returns_422(self, client: AsyncClient) -> None:
+        await register_and_login(client, _unique_email("task-list-limit-422"))
+        project_id = await _create_project(client)
+
+        response = await client.get(
+            f"/projects/{project_id}/tasks", params={"limit": 101}
+        )
+
+        assert response.status_code == 422
+
+    async def test_list_tasks_negative_offset_returns_422(self, client: AsyncClient) -> None:
+        await register_and_login(client, _unique_email("task-list-offset-422"))
+        project_id = await _create_project(client)
+
+        response = await client.get(
+            f"/projects/{project_id}/tasks", params={"offset": -1}
+        )
+
+        assert response.status_code == 422
 
 
 class TestUpdateTask:
@@ -278,7 +354,7 @@ class TestDeleteTask:
 
         assert response.status_code == 204
         listing = await client.get(f"/projects/{project_id}/tasks")
-        assert listing.json() == []
+        assert listing.json()["items"] == []
 
     async def test_delete_nonexistent_task_returns_404(self, client: AsyncClient) -> None:
         await register_and_login(client, _unique_email("task-delete-404"))
@@ -327,7 +403,7 @@ class TestDeleteTask:
         assert response.status_code == 204
         assert not (tmp_path / storage_key).exists()
         listing = await client.get(f"/projects/{project_id}/tasks")
-        assert listing.json() == []
+        assert listing.json()["items"] == []
 
     async def test_delete_task_returns_502_and_keeps_task_when_storage_fails(
         self, app: FastAPI, client: AsyncClient, tmp_path: Path
@@ -350,7 +426,7 @@ class TestDeleteTask:
 
         assert response.status_code == 502
         listing = await client.get(f"/projects/{project_id}/tasks")
-        [task] = listing.json()
+        [task] = listing.json()["items"]
         assert task["id"] == task_id
 
 
@@ -384,5 +460,5 @@ class TestNoNPlusOneOnListing:
         response = await client.get(f"/projects/{project_id}/tasks")
 
         assert response.status_code == 200
-        assert len(response.json()) == 5
+        assert len(response.json()["items"]) == 5
         assert call_count == 1

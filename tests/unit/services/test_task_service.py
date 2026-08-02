@@ -149,12 +149,15 @@ class TestListForProject:
         service, task_repository, _ = _make_service()
         project_id = uuid.uuid4()
         tasks = [_make_task(project_id=project_id), _make_task(project_id=project_id)]
-        task_repository.list_for_project.return_value = tasks
+        task_repository.list_for_project.return_value = (tasks, 2)
 
-        result = await service.list_for_project(project_id)
+        items, total = await service.list_for_project(project_id, limit=50, offset=0)
 
-        assert result == tasks
-        task_repository.list_for_project.assert_awaited_once_with(project_id)
+        assert items == tasks
+        assert total == 2
+        task_repository.list_for_project.assert_awaited_once_with(
+            project_id, 50, 0, status=None
+        )
 
 
 class TestUpdate:

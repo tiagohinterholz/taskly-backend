@@ -100,7 +100,7 @@ class TestUploadAttachment:
         listing = await client.get(f"/projects/{project_id}/tasks")
 
         assert listing.status_code == 200
-        [task] = listing.json()
+        [task] = listing.json()["items"]
         assert [a["id"] for a in task["attachments"]] == [attachment_id]
         assert task["attachments"][0]["url"] == (
             f"/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}/download"
@@ -123,7 +123,7 @@ class TestUploadAttachment:
 
         assert response.status_code == 413
         listing = await client.get(f"/projects/{project_id}/tasks")
-        [task] = listing.json()
+        [task] = listing.json()["items"]
         assert task["attachments"] == []
         assert list(tmp_path.rglob("*")) == []
 
@@ -155,7 +155,7 @@ class TestUploadAttachment:
         assert response.status_code == 502
         # The task itself (already-saved fields) is untouched by the failure.
         listing = await client.get(f"/projects/{project_id}/tasks")
-        [task] = listing.json()
+        [task] = listing.json()["items"]
         assert task["title"] == "Task"
         assert task["attachments"] == []
 
@@ -181,7 +181,7 @@ class TestDeleteAttachment:
         assert response.status_code == 204
         assert not (tmp_path / storage_key).exists()
         listing = await client.get(f"/projects/{project_id}/tasks")
-        [task] = listing.json()
+        [task] = listing.json()["items"]
         assert task["attachments"] == []
 
     async def test_delete_nonexistent_attachment_returns_404(

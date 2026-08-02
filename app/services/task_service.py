@@ -88,8 +88,16 @@ class TaskService:
         await self._session.commit()
         return task
 
-    async def list_for_project(self, project_id: uuid.UUID) -> list[Task]:
-        return await self._task_repository.list_for_project(project_id)
+    async def list_for_project(
+        self,
+        project_id: uuid.UUID,
+        limit: int,
+        offset: int,
+        status: TaskStatus | None = None,
+    ) -> tuple[list[Task], int]:
+        return await self._task_repository.list_for_project(
+            project_id, limit, offset, status=status
+        )
 
     async def update(self, project_id: uuid.UUID, task_id: uuid.UUID, **fields: Any) -> Task:
         owned = await self._task_repository.get_for_project(task_id, project_id)

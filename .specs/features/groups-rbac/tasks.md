@@ -189,10 +189,10 @@ T15 → T16
 
 ### T5: `GroupRepository` [P]
 
-**What**: Implement `app/repositories/group_repository.py` per `design.md`'s interface list (`create`, `get_membership`, `list_members`, `list_for_user`, `add_member`, `remove_member`, `set_role`, `count_linked_projects`), inheriting `BaseRepository[Group]`.
+**What**: Implement `app/repositories/group_repository.py` per `design.md`'s interface list (`create`, `get_membership`, `list_members`, `list_for_user`, `add_member`, `remove_member`, `set_role`, `count_linked_projects`), inheriting `BaseRepository[Group]`. `list_members`/`list_for_user` are paginated per AD-021 (`limit`/`offset` params, return `(items, total)`).
 **Where**: `app/repositories/group_repository.py`, `tests/integration/repositories/test_group_repository.py`
 **Depends on**: T4
-**Reuses**: `app/repositories/base.py`, `app/repositories/project_repository.py` (query style)
+**Reuses**: `app/repositories/base.py`, `app/repositories/project_repository.py` (query style, incl. its AD-021 pagination pattern — added by parallel work before this task runs, read it for the exact shape to mirror)
 **Requirement**: GRP-01, GRP-06, GRP-07, GRP-09, GRP-12, GRP-14
 
 **Tools**:
@@ -202,7 +202,8 @@ T15 → T16
 **Done when**:
 - [ ] Every interface method from `design.md` implemented
 - [ ] `create` atomically creates the group AND the Owner membership
-- [ ] Integration tests cover: create+owner-membership, list_members, list_for_user (multi-group), add/remove member, set_role (ownership transfer scenario), count_linked_projects (0 and >0)
+- [ ] `list_members`/`list_for_user` accept `limit`/`offset` and return `(items, total)` — total reflects the full count regardless of page size
+- [ ] Integration tests cover: create+owner-membership, list_members (incl. pagination slicing + total), list_for_user (multi-group, incl. pagination), add/remove member, set_role (ownership transfer scenario), count_linked_projects (0 and >0)
 - [ ] Gate check passes: `uv run pytest tests/integration/repositories -q`
 
 **Tests**: integration
@@ -213,10 +214,10 @@ T15 → T16
 
 ### T6: `GroupInviteRepository` [P]
 
-**What**: Implement `app/repositories/group_invite_repository.py` per `design.md` (`create`, `get_by_hash`, `list_pending`, `mark_consumed`, `mark_revoked`), inheriting `BaseRepository[GroupInvite]`.
+**What**: Implement `app/repositories/group_invite_repository.py` per `design.md` (`create`, `get_by_hash`, `list_pending`, `mark_consumed`, `mark_revoked`), inheriting `BaseRepository[GroupInvite]`. `list_pending` is paginated per AD-021.
 **Where**: `app/repositories/group_invite_repository.py`, `tests/integration/repositories/test_group_invite_repository.py`
 **Depends on**: T4
-**Reuses**: `app/repositories/refresh_token_repository.py` (near-identical shape)
+**Reuses**: `app/repositories/refresh_token_repository.py` (near-identical shape); `app/repositories/project_repository.py`'s AD-021 pagination pattern (added by parallel work — mirror its `(items, total)` return shape and ordering approach)
 **Requirement**: GRP-02, GRP-03, GRP-10, GRP-15
 
 **Tools**:
@@ -225,8 +226,8 @@ T15 → T16
 
 **Done when**:
 - [ ] Every interface method implemented
-- [ ] `list_pending` excludes consumed, revoked, AND expired invites
-- [ ] Integration tests cover: create+get_by_hash roundtrip, list_pending (mixed states), mark_consumed, mark_revoked
+- [ ] `list_pending` excludes consumed, revoked, AND expired invites; accepts `limit`/`offset`, returns `(items, total)`
+- [ ] Integration tests cover: create+get_by_hash roundtrip, list_pending (mixed states + pagination slicing/total), mark_consumed, mark_revoked
 - [ ] Gate check passes: `uv run pytest tests/integration/repositories -q`
 
 **Tests**: integration
@@ -237,10 +238,10 @@ T15 → T16
 
 ### T7: `ProjectRepository` extension — `get_accessible_for_user`/`list_accessible_for_user` [P]
 
-**What**: Add `get_accessible_for_user(project_id, user_id)` and rename `list_for_user`→`list_accessible_for_user` (query expanded per AD-018: owner OR group member). Leave `get_for_user` untouched. Update `ProjectService.list_for_user`'s single call site.
-**Where**: `app/repositories/project_repository.py`, `app/services/project_service.py`, `tests/integration/repositories/test_project_repository.py`
+**What**: Add `get_accessible_for_user(project_id, user_id)` and rename `list_for_user`→`list_accessible_for_user` (query expanded per AD-018: owner OR group member). Leave `get_for_user` untouched. Update `ProjectService.list_for_user`'s single call site. **Note**: by the time this task runs, `list_for_user` already has AD-021 pagination (`limit`/`offset` params, `(items, total)` return) added by parallel work that landed before groups-rbac Execute resumed — this task must PRESERVE that pagination through the rename/query-expansion, not remove or redo it. Read the current `app/repositories/project_repository.py` first to see its actual state before changing anything.
+**Where**: `app/repositories/project_repository.py`, `app/services/project_service.py`, `app/api/routers/projects.py` (if the pagination work changed its signature/response_model, keep that intact), `tests/integration/repositories/test_project_repository.py`
 **Depends on**: T4
-**Reuses**: Existing `get_for_user`/`list_for_user` query style in the same file
+**Reuses**: Existing `get_for_user`/`list_for_user` query style in the same file, including its already-landed AD-021 pagination pattern
 **Requirement**: GRP-04, GRP-05 (foundation for)
 
 **Tools**:
@@ -249,8 +250,8 @@ T15 → T16
 
 **Done when**:
 - [ ] `get_accessible_for_user` returns the project for the direct owner, for a group member, and `None` for neither
-- [ ] `list_accessible_for_user` returns direct + group-accessible projects, no duplicates if somehow both true
-- [ ] **Regression**: a user with zero groups gets identical results from `list_accessible_for_user` as the old `list_for_user` did (v1 behavior preserved)
+- [ ] `list_accessible_for_user` returns direct + group-accessible projects, no duplicates if somehow both true; still accepts `limit`/`offset` and returns `(items, total)` exactly as `list_for_user` did before the rename
+- [ ] **Regression**: a user with zero groups gets identical paginated results from `list_accessible_for_user` as the old `list_for_user` did (v1 + AD-021 behavior both preserved)
 - [ ] `get_for_user` (strict) behavior/tests untouched — `ProjectService.rename`/`delete` still reject non-owners including group members
 - [ ] Gate check passes: `uv run pytest tests/integration/repositories -q && uv run pytest tests/unit -q`
 
@@ -357,10 +358,10 @@ T15 → T16
 
 ### T12: `groups.py` router — group CRUD + members
 
-**What**: `POST /groups`, `GET /groups`, `PATCH /groups/{group_id}`, `DELETE /groups/{group_id}`, `GET /groups/{group_id}/members`, wired to `GroupService` (T8), with request/response Pydantic models and domain-exception→HTTP mapping per `design.md`'s Error Handling Strategy table.
+**What**: `POST /groups`, `GET /groups`, `PATCH /groups/{group_id}`, `DELETE /groups/{group_id}`, `GET /groups/{group_id}/members`, wired to `GroupService` (T8), with request/response Pydantic models and domain-exception→HTTP mapping per `design.md`'s Error Handling Strategy table. `GET /groups` and `GET /groups/{group_id}/members` are paginated per AD-021: accept `PaginationParams` (`app/api/pagination.py`, already exists by this point), `response_model=Page[GroupOut]`/`Page[MemberOut]`.
 **Where**: `app/api/routers/groups.py`, `tests/integration/api/test_groups_router.py`
 **Depends on**: T11 (full `GroupService` surface available; router built incrementally but service must compile)
-**Reuses**: `app/api/routers/projects.py` (router skeleton, factory-dependency pattern, exception mapping style)
+**Reuses**: `app/api/routers/projects.py` (router skeleton, factory-dependency pattern, exception mapping style, and — by the time this task runs — its AD-021 `PaginationParams`/`Page[T]` usage on `GET /projects` as the exact pattern to mirror)
 **Requirement**: GRP-01, GRP-06, GRP-12, GRP-13, GRP-14
 
 **Tools**:
@@ -369,6 +370,7 @@ T15 → T16
 
 **Done when**:
 - [ ] All 5 endpoints implemented with `response_model`s matching `design.md`
+- [ ] `GET /groups`/`GET .../members` return the `{items, total, limit, offset}` envelope; default/explicit `limit`/`offset` both covered by tests
 - [ ] Integration tests: happy path per endpoint + 403 (non-owner) + 404 (unknown/foreign group) + 409 (delete with linked project) — per spec P1/P2 ACs
 - [ ] Gate check passes: `uv run pytest tests/integration/api -q`
 
@@ -380,10 +382,10 @@ T15 → T16
 
 ### T13: `groups.py` router — invites
 
-**What**: `POST /groups/{group_id}/invites`, `GET /groups/{group_id}/invites`, `DELETE /groups/{group_id}/invites/{invite_id}`, `POST /invites/{token}/accept`.
+**What**: `POST /groups/{group_id}/invites`, `GET /groups/{group_id}/invites`, `DELETE /groups/{group_id}/invites/{invite_id}`, `POST /invites/{token}/accept`. `GET /groups/{group_id}/invites` is paginated per AD-021: accepts `PaginationParams`, `response_model=Page[GroupInviteOut]`.
 **Where**: `app/api/routers/groups.py`, `tests/integration/api/test_groups_router.py`
 **Depends on**: T12
-**Reuses**: Same router skeleton as T12
+**Reuses**: Same router skeleton as T12, same `PaginationParams`/`Page[T]` pattern
 **Requirement**: GRP-02, GRP-03, GRP-10, GRP-15
 
 **Tools**:
@@ -392,6 +394,7 @@ T15 → T16
 
 **Done when**:
 - [ ] All 4 endpoints implemented; invite-creation response includes the plain-text token exactly once
+- [ ] `GET .../invites` returns the `{items, total, limit, offset}` envelope
 - [ ] Integration tests: generate→accept happy path; accept twice → 409; accept expired → 410; accept revoked → 404; non-owner generates → 403; 11th invite in window → 429; already-member accepts → 409
 - [ ] Gate check passes: `uv run pytest tests/integration/api -q`
 

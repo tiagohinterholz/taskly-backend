@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from app.models.task import Task, TaskStatus
 from app.repositories.base import BaseRepository
@@ -44,9 +44,36 @@ class TaskRepository(BaseRepository[Task]):
         await self._session.flush()
         return task
 
-    async def list_for_project(self, project_id: uuid.UUID) -> list[Task]:
-        result = await self._session.execute(select(Task).where(Task.project_id == project_id))
-        return list(result.scalars().all())
+    async def list_for_project(
+        self,
+        project_id: uuid.UUID,
+        limit: int,
+        offset: int,
+        status: TaskStatus | None = None,
+    ) -> tuple[list[Task], int]:
+        """Paginated listing (AD-021): returns the requested page alongside
+        the total matching count (ignoring `limit`/`offset`), so callers can
+        build a `Page[TaskOut]` envelope. `status`, when given, narrows both
+        the page and the total to tasks in that status. Ordered by
+        `created_at` (with `id` as a tiebreaker) for stable page boundaries.
+        """
+        conditions = [Task.project_id == project_id]
+        if status is not None:
+            conditions.append(Task.status == status)
+
+        count_result = await self._session.execute(
+            select(func.count()).select_from(Task).where(*conditions)
+        )
+        total = count_result.scalar_one()
+
+        result = await self._session.execute(
+            select(Task)
+            .where(*conditions)
+            .order_by(Task.created_at, Task.id)
+            .limit(limit)
+            .offset(offset)
+        )
+        return list(result.scalars().all()), total
 
     async def get_for_project(self, task_id: uuid.UUID, project_id: uuid.UUID) -> Task | None:
         result = await self._session.execute(

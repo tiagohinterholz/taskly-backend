@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_user, get_db_session
+from app.api.pagination import Page, PaginationParams
 from app.models.project import Project
 from app.models.user import User
 from app.repositories.project_repository import ProjectRepository
@@ -44,12 +45,18 @@ async def create_project(
     return await project_service.create(user.id, payload.name)
 
 
-@router.get("", response_model=list[ProjectOut])
+@router.get("", response_model=Page[ProjectOut])
 async def list_projects(
+    pagination: PaginationParams = Depends(),
     user: User = Depends(get_current_user),
     project_service: ProjectService = Depends(_get_project_service),
-) -> list[Project]:
-    return await project_service.list_for_user(user.id)
+) -> Page[ProjectOut]:
+    projects, total = await project_service.list_for_user(
+        user.id, pagination.limit, pagination.offset
+    )
+    return Page[ProjectOut](
+        items=projects, total=total, limit=pagination.limit, offset=pagination.offset
+    )
 
 
 @router.patch("/{project_id}", response_model=ProjectOut)

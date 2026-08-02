@@ -31,10 +31,11 @@ class TestProjectRepositoryListForUser:
         project_a = await repo.create(user_id=user_a.id, name="A's project")
         await repo.create(user_id=user_b.id, name="B's project")
 
-        projects_for_a = await repo.list_for_user(user_a.id)
+        projects_for_a, total = await repo.list_for_user(user_a.id, limit=50, offset=0)
 
         assert [p.id for p in projects_for_a] == [project_a.id]
         assert all(p.user_id == user_a.id for p in projects_for_a)
+        assert total == 1
 
 
 class TestProjectRepositoryGetForUser:
@@ -82,8 +83,9 @@ class TestProjectRepositoryDelete:
 
         await repo.delete(project.id)
 
-        remaining = await repo.list_for_user(user.id)
+        remaining, total = await repo.list_for_user(user.id, limit=50, offset=0)
         assert remaining == []
+        assert total == 0
 
 
 class TestProjectRepositoryCountTasks:

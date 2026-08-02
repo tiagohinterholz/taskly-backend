@@ -46,21 +46,23 @@ class TestListForUser:
         service, project_repository, _ = _make_service()
         user_id = uuid.uuid4()
         user_projects = [_make_project(user_id, "A"), _make_project(user_id, "B")]
-        project_repository.list_for_user.return_value = user_projects
+        project_repository.list_for_user.return_value = (user_projects, 2)
 
-        result = await service.list_for_user(user_id)
+        items, total = await service.list_for_user(user_id, limit=50, offset=0)
 
-        assert result == user_projects
-        project_repository.list_for_user.assert_awaited_once_with(user_id)
+        assert items == user_projects
+        assert total == 2
+        project_repository.list_for_user.assert_awaited_once_with(user_id, 50, 0)
 
     async def test_list_for_user_returns_empty_list_when_user_has_no_projects(self) -> None:
         service, project_repository, _ = _make_service()
         user_id = uuid.uuid4()
-        project_repository.list_for_user.return_value = []
+        project_repository.list_for_user.return_value = ([], 0)
 
-        result = await service.list_for_user(user_id)
+        items, total = await service.list_for_user(user_id, limit=50, offset=0)
 
-        assert result == []
+        assert items == []
+        assert total == 0
 
 
 class TestRename:

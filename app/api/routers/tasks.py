@@ -2,11 +2,12 @@ import uuid
 from collections import defaultdict
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_user, get_db_session
+from app.api.pagination import Page, PaginationParams
 from app.models.attachment import Attachment
 from app.models.task import Task, TaskStatus
 from app.models.user import User
@@ -161,15 +162,19 @@ async def create_task(
     return _to_task_out(task, [])
 
 
-@router.get("/projects/{project_id}/tasks", response_model=list[TaskOut])
+@router.get("/projects/{project_id}/tasks", response_model=Page[TaskOut])
 async def list_tasks(
     project_id: uuid.UUID,
+    status_filter: TaskStatus | None = Query(default=None, alias="status"),
+    pagination: PaginationParams = Depends(),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
     task_service: TaskService = Depends(_get_task_service),
-) -> list[TaskOut]:
+) -> Page[TaskOut]:
     await _get_owned_project_id(project_id, user.id, session)
-    tasks = await task_service.list_for_project(project_id)
+    tasks, total = await task_service.list_for_project(
+        project_id, pagination.limit, pagination.offset, status=status_filter
+    )
 
     # Batch-fetch attachments for every returned task in a single query and
     # group them in Python — avoids N+1 (one attachment query per task).
@@ -178,7 +183,8 @@ async def list_tasks(
     for attachment in attachments:
         attachments_by_task[attachment.task_id].append(attachment)
 
-    return [_to_task_out(task, attachments_by_task.get(task.id, [])) for task in tasks]
+    items = [_to_task_out(task, attachments_by_task.get(task.id, [])) for task in tasks]
+    return Page[TaskOut](items=items, total=total, limit=pagination.limit, offset=pagination.offset)
 
 
 @router.patch("/projects/{project_id}/tasks/{task_id}", response_model=TaskOut)
