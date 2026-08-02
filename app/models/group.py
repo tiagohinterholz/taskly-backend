@@ -2,11 +2,12 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Index, String, UniqueConstraint, func, text
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
+from app.models.base import CreatedAtMixin, TimestampMixin
 
 
 class GroupRole(str, enum.Enum):
@@ -14,20 +15,14 @@ class GroupRole(str, enum.Enum):
     MEMBER = "member"
 
 
-class Group(Base):
+class Group(TimestampMixin, Base):
     __tablename__ = "groups"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
-    )
 
 
-class GroupMembership(Base):
+class GroupMembership(CreatedAtMixin, Base):
     __tablename__ = "group_memberships"
     __table_args__ = (
         UniqueConstraint("group_id", "user_id", name="uq_group_memberships_group_id_user_id"),
@@ -50,12 +45,9 @@ class GroupMembership(Base):
         Enum(GroupRole, name="group_role", values_callable=lambda enum_cls: [e.value for e in enum_cls]),
         nullable=False,
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
 
 
-class GroupInvite(Base):
+class GroupInvite(CreatedAtMixin, Base):
     __tablename__ = "group_invites"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -69,6 +61,3 @@ class GroupInvite(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
