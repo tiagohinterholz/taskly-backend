@@ -30,6 +30,12 @@ class GroupRepository(BaseRepository[Group]):
         await self._session.flush()
         return group
 
+    async def rename(self, group_id: uuid.UUID, name: str) -> Group:
+        await self._session.execute(update(Group).where(Group.id == group_id).values(name=name))
+        await self._session.flush()
+        result = await self._session.execute(select(Group).where(Group.id == group_id))
+        return result.scalar_one()
+
     async def get_membership(
         self, group_id: uuid.UUID, user_id: uuid.UUID
     ) -> GroupMembership | None:
