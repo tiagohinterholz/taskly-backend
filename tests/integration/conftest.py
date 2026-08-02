@@ -13,7 +13,11 @@ from app.core.db import async_session_factory, engine
 # integration tests in this suite are NOT safe to run in parallel with each
 # other (see Parallelism Assessment in tasks.md). Future integration test
 # files (T8, T11, and later routers) should reuse this same fixture/file.
-_ALL_TABLES = "refresh_tokens, attachments, tasks, projects, users"
+# groups/group_memberships/group_invites added in groups-rbac Phase 2 (T5):
+# without them listed explicitly, Group rows (nothing else FK-references
+# them within this table set) would never be cleared between tests and
+# would leak into later tests' pagination `total` counts.
+_ALL_TABLES = "refresh_tokens, attachments, tasks, projects, users, groups, group_memberships, group_invites"
 
 
 @pytest_asyncio.fixture
