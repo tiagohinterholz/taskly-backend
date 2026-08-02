@@ -96,9 +96,16 @@ class TestProjectRepositoryListAccessibleForUser:
     async def test_list_accessible_for_user_regression_matches_old_strict_behavior_with_no_groups(
         self, db_session: AsyncSession
     ) -> None:
-        """AD-018 non-regression: a v1 user who never touches groups gets an
-        identical paginated result (same items, same total, same order)
-        from list_accessible_for_user as the old strict list_for_user did.
+        """AD-018 non-regression: a v1 user who never touches groups gets the
+        same set of projects (only their own, none of another user's) and
+        the same total from list_accessible_for_user as the old strict
+        list_for_user did. Order is intentionally not asserted here: within
+        one transaction Postgres's `now()` is transaction-start-time, so
+        project_a1/project_a2's `created_at` are identical by construction —
+        the repository's `(created_at, id)` ordering only guarantees a
+        *stable* order across repeated calls, not insertion order, so
+        asserting a specific list order here would be flaky by construction
+        (id is a random UUID, unrelated to creation order).
         """
         user_a = await _make_user(db_session, email="a-regress@example.com")
         user_b = await _make_user(db_session, email="b-regress@example.com")
@@ -110,7 +117,7 @@ class TestProjectRepositoryListAccessibleForUser:
         results, total = await repo.list_accessible_for_user(user_a.id, limit=50, offset=0)
 
         assert total == 2
-        assert [p.id for p in results] == [project_a1.id, project_a2.id]
+        assert {p.id for p in results} == {project_a1.id, project_a2.id}
         assert all(p.user_id == user_a.id for p in results)
 
     async def test_list_accessible_for_user_paginates_with_total_reflecting_full_count(
