@@ -13,9 +13,14 @@ from app.repositories.group_invite_repository import GroupInviteRepository
 from app.repositories.group_repository import GroupRepository
 from app.repositories.project_repository import ProjectRepository
 from app.services.group_service import (
+    AlreadyMemberError,
     GroupHasProjectsError,
     GroupNotFoundError,
     GroupService,
+    InviteAlreadyUsedError,
+    InviteExpiredError,
+    InviteNotFoundError,
+    InviteRateLimitExceededError,
     NotGroupOwnerError,
 )
 
@@ -60,6 +65,28 @@ class MemberOut(BaseModel):
     user_id: uuid.UUID
     role: str
     created_at: datetime
+
+
+class GroupInviteOut(BaseModel):
+    """Invite metadata only — never the plain token or its hash. Used by
+    the listing endpoint (`GET .../invites`), which must not let a caller
+    recover a usable token after the fact.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    created_by_user_id: uuid.UUID
+    expires_at: datetime
+    created_at: datetime
+
+
+class GroupInviteCreateOut(GroupInviteOut):
+    """Returned only by the create-invite endpoint: the one response that
+    carries the plain-text token, exactly once, never recoverable again.
+    """
+
+    token: str
 
 
 # GroupService.create_invite() rate-limits per (group_id, owner_user_id) using
@@ -166,3 +193,94 @@ async def list_group_members(
     except GroupNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="group not found") from exc
     return Page[MemberOut](items=members, total=total, limit=pagination.limit, offset=pagination.offset)
+
+
+@router.post(
+    "/groups/{group_id}/invites", response_model=GroupInviteCreateOut, status_code=status.HTTP_201_CREATED
+)
+async def create_invite(
+    group_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    group_service: GroupService = Depends(_get_group_service),
+) -> GroupInviteCreateOut:
+    try:
+        invite, plain_token = await group_service.create_invite(user.id, group_id)
+    except GroupNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="group not found") from exc
+    except NotGroupOwnerError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="only the group owner can perform this action"
+        ) from exc
+    except InviteRateLimitExceededError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="too many invites generated, try again later",
+        ) from exc
+    return GroupInviteCreateOut(
+        id=invite.id,
+        created_by_user_id=invite.created_by_user_id,
+        expires_at=invite.expires_at,
+        created_at=invite.created_at,
+        token=plain_token,
+    )
+
+
+@router.get("/groups/{group_id}/invites", response_model=Page[GroupInviteOut])
+async def list_group_invites(
+    group_id: uuid.UUID,
+    pagination: PaginationParams = Depends(),
+    user: User = Depends(get_current_user),
+    group_service: GroupService = Depends(_get_group_service),
+) -> Page[GroupInviteOut]:
+    try:
+        invites, total = await group_service.list_pending_invites(
+            user.id, group_id, pagination.limit, pagination.offset
+        )
+    except GroupNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="group not found") from exc
+    except NotGroupOwnerError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="only the group owner can perform this action"
+        ) from exc
+    return Page[GroupInviteOut](
+        items=invites, total=total, limit=pagination.limit, offset=pagination.offset
+    )
+
+
+@router.delete("/groups/{group_id}/invites/{invite_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_invite(
+    group_id: uuid.UUID,
+    invite_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    group_service: GroupService = Depends(_get_group_service),
+) -> None:
+    try:
+        await group_service.revoke_invite(user.id, group_id, invite_id)
+    except GroupNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="group not found") from exc
+    except NotGroupOwnerError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="only the group owner can perform this action"
+        ) from exc
+    except InviteNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="invite not found") from exc
+
+
+@router.post("/invites/{token}/accept", response_model=GroupOut)
+async def accept_invite(
+    token: str,
+    user: User = Depends(get_current_user),
+    group_service: GroupService = Depends(_get_group_service),
+) -> Group:
+    try:
+        return await group_service.accept_invite(user.id, token)
+    except InviteNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="invite not found") from exc
+    except InviteExpiredError as exc:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="invite expired") from exc
+    except InviteAlreadyUsedError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="invite already used") from exc
+    except AlreadyMemberError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="you are already a member of this group"
+        ) from exc

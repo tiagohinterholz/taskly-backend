@@ -1,9 +1,13 @@
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from httpx import AsyncClient
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.group import GroupRole
+from app.core.security import hash_token
+from app.models.group import GroupInvite, GroupRole
+from app.repositories.group_invite_repository import GroupInviteRepository
 from app.repositories.group_repository import GroupRepository
 from app.repositories.project_repository import ProjectRepository
 from tests.integration.api.conftest import register_and_login
@@ -281,3 +285,269 @@ class TestListGroupMembers:
         assert len(second_body["items"]) == 1
         assert second_body["total"] == 3
         assert second_body["offset"] == 2
+
+
+class TestCreateInvite:
+    async def test_create_invite_returns_201_with_plain_token(self, client: AsyncClient) -> None:
+        owner_id = await _register_and_get_id(client, _unique_email("grp-invite-create-owner"))
+        created = await client.post("/groups", json={"name": "Team"})
+        group_id = created.json()["id"]
+
+        response = await client.post(f"/groups/{group_id}/invites")
+
+        assert response.status_code == 201
+        body = response.json()
+        assert isinstance(body["token"], str) and len(body["token"]) > 0
+        assert body["created_by_user_id"] == str(owner_id)
+        assert "expires_at" in body
+        assert "token_hash" not in body
+
+    async def test_create_invite_without_session_returns_401(self, client: AsyncClient) -> None:
+        await register_and_login(client, _unique_email("grp-invite-create-401-owner"))
+        created = await client.post("/groups", json={"name": "Team"})
+        group_id = created.json()["id"]
+        await client.post("/auth/logout")
+
+        response = await client.post(f"/groups/{group_id}/invites")
+
+        assert response.status_code == 401
+
+    async def test_create_invite_by_non_owner_member_returns_403(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        await register_and_login(client, _unique_email("grp-invite-create-403-owner"))
+        created = await client.post("/groups", json={"name": "Team"})
+        group_id = uuid.UUID(created.json()["id"])
+        await client.post("/auth/logout")
+
+        member_id = await _register_and_get_id(client, _unique_email("grp-invite-create-403-member"))
+        await GroupRepository(db_session).add_member(group_id, member_id, GroupRole.MEMBER)
+        await db_session.commit()
+
+        response = await client.post(f"/groups/{group_id}/invites")
+
+        assert response.status_code == 403
+
+    async def test_create_invite_by_non_member_returns_404(self, client: AsyncClient) -> None:
+        await register_and_login(client, _unique_email("grp-invite-create-404-owner"))
+        created = await client.post("/groups", json={"name": "Team"})
+        group_id = created.json()["id"]
+        await client.post("/auth/logout")
+
+        await register_and_login(client, _unique_email("grp-invite-create-404-outsider"))
+        response = await client.post(f"/groups/{group_id}/invites")
+
+        assert response.status_code == 404
+
+    async def test_eleventh_invite_in_one_hour_returns_429(self, client: AsyncClient) -> None:
+        await register_and_login(client, _unique_email("grp-invite-ratelimit-owner"))
+        created = await client.post("/groups", json={"name": "Rate limited team"})
+        group_id = created.json()["id"]
+
+        for _ in range(10):
+            response = await client.post(f"/groups/{group_id}/invites")
+            assert response.status_code == 201
+
+        eleventh = await client.post(f"/groups/{group_id}/invites")
+
+        assert eleventh.status_code == 429
+
+
+class TestListGroupInvites:
+    async def test_list_pending_invites_returns_metadata_only(self, client: AsyncClient) -> None:
+        await register_and_login(client, _unique_email("grp-invite-list-owner"))
+        created = await client.post("/groups", json={"name": "Team"})
+        group_id = created.json()["id"]
+        create_response = await client.post(f"/groups/{group_id}/invites")
+        assert create_response.status_code == 201
+
+        response = await client.get(f"/groups/{group_id}/invites")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["total"] == 1
+        item = body["items"][0]
+        assert "id" in item and "expires_at" in item and "created_by_user_id" in item
+        assert "token" not in item
+        assert "token_hash" not in item
+
+    async def test_list_pending_invites_by_non_owner_member_returns_403(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        await register_and_login(client, _unique_email("grp-invite-list-403-owner"))
+        created = await client.post("/groups", json={"name": "Team"})
+        group_id = uuid.UUID(created.json()["id"])
+        await client.post("/auth/logout")
+
+        member_id = await _register_and_get_id(client, _unique_email("grp-invite-list-403-member"))
+        await GroupRepository(db_session).add_member(group_id, member_id, GroupRole.MEMBER)
+        await db_session.commit()
+
+        response = await client.get(f"/groups/{group_id}/invites")
+
+        assert response.status_code == 403
+
+    async def test_list_pending_invites_by_non_member_returns_404(self, client: AsyncClient) -> None:
+        await register_and_login(client, _unique_email("grp-invite-list-404-owner"))
+        created = await client.post("/groups", json={"name": "Team"})
+        group_id = created.json()["id"]
+        await client.post("/auth/logout")
+
+        await register_and_login(client, _unique_email("grp-invite-list-404-outsider"))
+        response = await client.get(f"/groups/{group_id}/invites")
+
+        assert response.status_code == 404
+
+
+class TestRevokeInvite:
+    async def test_revoke_invite_then_accept_returns_404(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        await register_and_login(client, _unique_email("grp-invite-revoke-owner"))
+        created = await client.post("/groups", json={"name": "Team"})
+        group_id = created.json()["id"]
+        create_response = await client.post(f"/groups/{group_id}/invites")
+        invite_id = create_response.json()["id"]
+        token = create_response.json()["token"]
+
+        revoke_response = await client.delete(f"/groups/{group_id}/invites/{invite_id}")
+        assert revoke_response.status_code == 204
+        await client.post("/auth/logout")
+
+        await register_and_login(client, _unique_email("grp-invite-revoke-acceptor"))
+        accept_response = await client.post(f"/invites/{token}/accept")
+
+        assert accept_response.status_code == 404
+
+    async def test_revoke_invite_by_non_owner_member_returns_403(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        await register_and_login(client, _unique_email("grp-invite-revoke-403-owner"))
+        created = await client.post("/groups", json={"name": "Team"})
+        group_id = uuid.UUID(created.json()["id"])
+        create_response = await client.post(f"/groups/{group_id}/invites")
+        invite_id = create_response.json()["id"]
+        await client.post("/auth/logout")
+
+        member_id = await _register_and_get_id(client, _unique_email("grp-invite-revoke-403-member"))
+        await GroupRepository(db_session).add_member(group_id, member_id, GroupRole.MEMBER)
+        await db_session.commit()
+
+        response = await client.delete(f"/groups/{group_id}/invites/{invite_id}")
+
+        assert response.status_code == 403
+
+    async def test_revoke_unknown_invite_returns_404(self, client: AsyncClient) -> None:
+        await register_and_login(client, _unique_email("grp-invite-revoke-404-owner"))
+        created = await client.post("/groups", json={"name": "Team"})
+        group_id = created.json()["id"]
+
+        response = await client.delete(f"/groups/{group_id}/invites/{uuid.uuid4()}")
+
+        assert response.status_code == 404
+
+
+class TestAcceptInvite:
+    async def test_accept_valid_invite_returns_200_and_creates_membership(
+        self, client: AsyncClient
+    ) -> None:
+        await register_and_login(client, _unique_email("grp-invite-accept-owner"))
+        created = await client.post("/groups", json={"name": "Team"})
+        group_id = created.json()["id"]
+        create_response = await client.post(f"/groups/{group_id}/invites")
+        token = create_response.json()["token"]
+        await client.post("/auth/logout")
+
+        await register_and_login(client, _unique_email("grp-invite-accept-member"))
+        response = await client.post(f"/invites/{token}/accept")
+
+        assert response.status_code == 200
+        assert response.json()["id"] == group_id
+
+        members = await client.get(f"/groups/{group_id}/members")
+        assert members.status_code == 200
+        assert members.json()["total"] == 2
+
+    async def test_accept_invite_without_session_returns_401(self, client: AsyncClient) -> None:
+        response = await client.post(f"/invites/{uuid.uuid4()}/accept")
+
+        assert response.status_code == 401
+
+    async def test_accept_unknown_token_returns_404(self, client: AsyncClient) -> None:
+        await register_and_login(client, _unique_email("grp-invite-accept-404"))
+
+        response = await client.post("/invites/not-a-real-token/accept")
+
+        assert response.status_code == 404
+
+    async def test_accept_already_consumed_token_returns_409(self, client: AsyncClient) -> None:
+        await register_and_login(client, _unique_email("grp-invite-accept-409-owner"))
+        created = await client.post("/groups", json={"name": "Team"})
+        group_id = created.json()["id"]
+        create_response = await client.post(f"/groups/{group_id}/invites")
+        token = create_response.json()["token"]
+        await client.post("/auth/logout")
+
+        await register_and_login(client, _unique_email("grp-invite-accept-409-first"))
+        first_accept = await client.post(f"/invites/{token}/accept")
+        assert first_accept.status_code == 200
+        await client.post("/auth/logout")
+
+        await register_and_login(client, _unique_email("grp-invite-accept-409-second"))
+        second_accept = await client.post(f"/invites/{token}/accept")
+
+        assert second_accept.status_code == 409
+
+    async def test_accept_already_member_returns_409(self, client: AsyncClient) -> None:
+        owner_email = _unique_email("grp-invite-accept-already-owner")
+        await register_and_login(client, owner_email)
+        created = await client.post("/groups", json={"name": "Team"})
+        group_id = created.json()["id"]
+        first_invite = await client.post(f"/groups/{group_id}/invites")
+        first_token = first_invite.json()["token"]
+        await client.post("/auth/logout")
+
+        member_email = _unique_email("grp-invite-accept-already-member")
+        await register_and_login(client, member_email)
+        joined = await client.post(f"/invites/{first_token}/accept")
+        assert joined.status_code == 200
+        await client.post("/auth/logout")
+
+        login_as_owner = await client.post(
+            "/auth/login", json={"email": owner_email, "password": "correct-horse-battery-staple"}
+        )
+        assert login_as_owner.status_code == 200
+        second_invite = await client.post(f"/groups/{group_id}/invites")
+        second_token = second_invite.json()["token"]
+        await client.post("/auth/logout")
+
+        login_as_member = await client.post(
+            "/auth/login", json={"email": member_email, "password": "correct-horse-battery-staple"}
+        )
+        assert login_as_member.status_code == 200
+        response = await client.post(f"/invites/{second_token}/accept")
+
+        assert response.status_code == 409
+
+    async def test_accept_expired_invite_returns_410(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        await register_and_login(client, _unique_email("grp-invite-accept-410-owner"))
+        created = await client.post("/groups", json={"name": "Team"})
+        group_id = created.json()["id"]
+        create_response = await client.post(f"/groups/{group_id}/invites")
+        token = create_response.json()["token"]
+
+        invite = await GroupInviteRepository(db_session).get_by_hash(hash_token(token))
+        await db_session.execute(
+            update(GroupInvite)
+            .where(GroupInvite.id == invite.id)
+            .values(expires_at=datetime.now(timezone.utc) - timedelta(days=1))
+        )
+        await db_session.commit()
+        await client.post("/auth/logout")
+
+        await register_and_login(client, _unique_email("grp-invite-accept-410-member"))
+        response = await client.post(f"/invites/{token}/accept")
+
+        assert response.status_code == 410
