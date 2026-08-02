@@ -86,6 +86,18 @@ class ProjectRepository(BaseRepository[Project]):
         )
         return result.scalar_one_or_none()
 
+    async def set_group(self, project_id: uuid.UUID, group_id: uuid.UUID | None) -> Project:
+        """Bare 1-column update of `group_id` — used by GroupService for
+        both link (sets the group's id) and unlink (sets None). No business
+        logic here; ownership/link-state checks belong to the caller.
+        """
+        await self._session.execute(
+            update(Project).where(Project.id == project_id).values(group_id=group_id)
+        )
+        await self._session.flush()
+        result = await self._session.execute(select(Project).where(Project.id == project_id))
+        return result.scalar_one()
+
     async def rename(self, project_id: uuid.UUID, name: str) -> Project:
         await self._session.execute(
             update(Project).where(Project.id == project_id).values(name=name)

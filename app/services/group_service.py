@@ -5,9 +5,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import generate_opaque_token, hash_token
 from app.models.group import Group, GroupInvite, GroupMembership, GroupRole
+from app.models.project import Project
 from app.repositories.group_invite_repository import GroupInviteRepository
 from app.repositories.group_repository import GroupRepository
 from app.repositories.project_repository import ProjectRepository
+from app.services.project_service import ProjectNotFoundError
 
 _INVITE_TOKEN_TTL = timedelta(days=7)
 _INVITE_RATE_LIMIT_MAX = 10
@@ -73,6 +75,12 @@ class SoleOwnerCannotLeaveError(Exception):
     """Raised by leave() when the acting user is the group's Owner — a group
     can never end up without an Owner, so the Owner must transfer ownership
     first (GRP-08 AC3).
+    """
+
+
+class ProjectAlreadyLinkedError(Exception):
+    """Raised by link_project() when the target project already has a
+    group_id set (a project belongs to at most one group at a time).
     """
 
 
@@ -235,6 +243,33 @@ class GroupService:
         await self._group_repository.set_role(group_id, acting_user_id, GroupRole.MEMBER)
         await self._group_repository.set_role(group_id, new_owner_user_id, GroupRole.OWNER)
         await self._session.commit()
+
+    async def link_project(
+        self, acting_user_id: uuid.UUID, group_id: uuid.UUID, project_id: uuid.UUID
+    ) -> Project:
+        await self._require_owner(acting_user_id, group_id)
+        # Strict get_for_user (not the group-accessible variant): only the
+        # project's actual owner (user_id) can be linked, mirroring
+        # ProjectService.rename/delete's ownership check (AD-012/AD-018).
+        project = await self._project_repository.get_for_user(project_id, acting_user_id)
+        if project is None:
+            raise ProjectNotFoundError(project_id)
+        if project.group_id is not None:
+            raise ProjectAlreadyLinkedError(project_id)
+        project = await self._project_repository.set_group(project_id, group_id)
+        await self._session.commit()
+        return project
+
+    async def unlink_project(
+        self, acting_user_id: uuid.UUID, group_id: uuid.UUID, project_id: uuid.UUID
+    ) -> Project:
+        await self._require_owner(acting_user_id, group_id)
+        project = await self._project_repository.get_by_id(project_id)
+        if project is None or project.group_id != group_id:
+            raise ProjectNotFoundError(project_id)
+        project = await self._project_repository.set_group(project_id, None)
+        await self._session.commit()
+        return project
 
     async def _require_owner(
         self, acting_user_id: uuid.UUID, group_id: uuid.UUID

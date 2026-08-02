@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.group import Group, GroupInvite, GroupMembership, GroupRole
+from app.models.project import Project
 from app.repositories.group_invite_repository import GroupInviteRepository
 from app.repositories.group_repository import GroupRepository
 from app.repositories.project_repository import ProjectRepository
@@ -20,8 +21,10 @@ from app.services.group_service import (
     InviteRateLimitExceededError,
     NotGroupMemberError,
     NotGroupOwnerError,
+    ProjectAlreadyLinkedError,
     SoleOwnerCannotLeaveError,
 )
+from app.services.project_service import ProjectNotFoundError
 
 
 def _make_service() -> tuple[GroupService, AsyncMock, AsyncMock, AsyncMock, AsyncMock]:
@@ -56,6 +59,19 @@ def _make_membership(
         user_id=user_id,
         role=role,
         created_at=datetime.now(timezone.utc),
+    )
+
+
+def _make_project(
+    user_id: uuid.UUID, group_id: uuid.UUID | None = None, name: str = "My Project"
+) -> Project:
+    return Project(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        group_id=group_id,
+        name=name,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
     )
 
 
@@ -621,3 +637,132 @@ class TestTransferOwnership:
             call(group_id, new_owner_id, GroupRole.OWNER),
         ]
         session.commit.assert_awaited_once()
+
+
+class TestLinkProject:
+    async def test_link_project_by_owner_of_group_and_project_sets_group_id(self) -> None:
+        service, group_repository, _, project_repository, session = _make_service()
+        owner_id = uuid.uuid4()
+        group_id = uuid.uuid4()
+        project_id = uuid.uuid4()
+        group_repository.get_membership.return_value = _make_membership(
+            group_id, owner_id, GroupRole.OWNER
+        )
+        project_repository.get_for_user.return_value = _make_project(owner_id, group_id=None)
+        linked_project = _make_project(owner_id, group_id=group_id)
+        project_repository.set_group.return_value = linked_project
+
+        result = await service.link_project(owner_id, group_id, project_id)
+
+        assert result is linked_project
+        assert result.group_id == group_id
+        project_repository.get_for_user.assert_awaited_once_with(project_id, owner_id)
+        project_repository.set_group.assert_awaited_once_with(project_id, group_id)
+        session.commit.assert_awaited_once()
+
+    async def test_link_project_by_non_owner_of_group_raises_not_group_owner_error(self) -> None:
+        service, group_repository, _, project_repository, session = _make_service()
+        member_id = uuid.uuid4()
+        group_id = uuid.uuid4()
+        group_repository.get_membership.return_value = _make_membership(
+            group_id, member_id, GroupRole.MEMBER
+        )
+
+        with pytest.raises(NotGroupOwnerError):
+            await service.link_project(member_id, group_id, uuid.uuid4())
+
+        project_repository.get_for_user.assert_not_awaited()
+        project_repository.set_group.assert_not_awaited()
+        session.commit.assert_not_awaited()
+
+    async def test_link_project_not_owned_by_acting_user_raises_project_not_found_error(
+        self,
+    ) -> None:
+        service, group_repository, _, project_repository, session = _make_service()
+        owner_id = uuid.uuid4()
+        group_id = uuid.uuid4()
+        group_repository.get_membership.return_value = _make_membership(
+            group_id, owner_id, GroupRole.OWNER
+        )
+        project_repository.get_for_user.return_value = None
+
+        with pytest.raises(ProjectNotFoundError):
+            await service.link_project(owner_id, group_id, uuid.uuid4())
+
+        project_repository.set_group.assert_not_awaited()
+        session.commit.assert_not_awaited()
+
+    async def test_link_project_already_linked_to_another_group_raises_already_linked_error(
+        self,
+    ) -> None:
+        service, group_repository, _, project_repository, session = _make_service()
+        owner_id = uuid.uuid4()
+        group_id = uuid.uuid4()
+        other_group_id = uuid.uuid4()
+        group_repository.get_membership.return_value = _make_membership(
+            group_id, owner_id, GroupRole.OWNER
+        )
+        project_repository.get_for_user.return_value = _make_project(
+            owner_id, group_id=other_group_id
+        )
+
+        with pytest.raises(ProjectAlreadyLinkedError):
+            await service.link_project(owner_id, group_id, uuid.uuid4())
+
+        project_repository.set_group.assert_not_awaited()
+        session.commit.assert_not_awaited()
+
+
+class TestUnlinkProject:
+    async def test_unlink_project_by_owner_nulls_group_id(self) -> None:
+        service, group_repository, _, project_repository, session = _make_service()
+        owner_id = uuid.uuid4()
+        group_id = uuid.uuid4()
+        project_id = uuid.uuid4()
+        group_repository.get_membership.return_value = _make_membership(
+            group_id, owner_id, GroupRole.OWNER
+        )
+        project_repository.get_by_id.return_value = _make_project(owner_id, group_id=group_id)
+        unlinked_project = _make_project(owner_id, group_id=None)
+        project_repository.set_group.return_value = unlinked_project
+
+        result = await service.unlink_project(owner_id, group_id, project_id)
+
+        assert result is unlinked_project
+        assert result.group_id is None
+        project_repository.set_group.assert_awaited_once_with(project_id, None)
+        session.commit.assert_awaited_once()
+
+    async def test_unlink_project_by_non_owner_raises_not_group_owner_error(self) -> None:
+        service, group_repository, _, project_repository, session = _make_service()
+        member_id = uuid.uuid4()
+        group_id = uuid.uuid4()
+        group_repository.get_membership.return_value = _make_membership(
+            group_id, member_id, GroupRole.MEMBER
+        )
+
+        with pytest.raises(NotGroupOwnerError):
+            await service.unlink_project(member_id, group_id, uuid.uuid4())
+
+        project_repository.set_group.assert_not_awaited()
+        session.commit.assert_not_awaited()
+
+    async def test_unlink_project_not_linked_to_this_group_raises_project_not_found_error(
+        self,
+    ) -> None:
+        service, group_repository, _, project_repository, session = _make_service()
+        owner_id = uuid.uuid4()
+        group_id = uuid.uuid4()
+        other_group_id = uuid.uuid4()
+        group_repository.get_membership.return_value = _make_membership(
+            group_id, owner_id, GroupRole.OWNER
+        )
+        project_repository.get_by_id.return_value = _make_project(
+            owner_id, group_id=other_group_id
+        )
+
+        with pytest.raises(ProjectNotFoundError):
+            await service.unlink_project(owner_id, group_id, uuid.uuid4())
+
+        project_repository.set_group.assert_not_awaited()
+        session.commit.assert_not_awaited()
