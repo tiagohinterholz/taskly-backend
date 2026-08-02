@@ -166,3 +166,19 @@
 - **Scope**: Backend (`app/core/security.py`, `app/services/auth_service.py`, `app/services/group_service.py`).
 - **Date**: 2026-08-02
 - **Status**: active
+
+### AD-020
+- **Decision**: `CreatedAtMixin`/`TimestampMixin` (`app/models/base.py`) substituem os campos `created_at`/`updated_at` duplicados inline em todos os 8 models. Convenção: mixin sempre listado ANTES de `Base` na herança (`class Model(TimestampMixin, Base)`), seguindo a própria documentação do SQLAlchemy 2.0 pra ordem de MRO em mixins declarativos.
+- **Reason**: Usuário apontou a duplicação diretamente ("as classes elas tão repetindo created_at updated_at... abstrai isso numa classe pra ser herdada") ao ver os 3 models novos de `groups-rbac` repetirem o mesmo padrão dos 5 já existentes — mesmo racional de `BaseRepository` (AD-014), agora aplicado à camada de model.
+- **Trade-off**: Nenhum — refatoração pura de código Python, sem mudança de nome/tipo/default de coluna, portanto **sem migration necessária**.
+- **Scope**: Backend (todos os models). Qualquer model futuro com timestamp deve herdar de um dos dois mixins em vez de declarar as colunas inline.
+- **Date**: 2026-08-02
+- **Status**: active
+
+### AD-021
+- **Decision**: Paginação real (não só "watch out") em toda listagem da API, v1 incluído — `GET /projects` e `GET /projects/{id}/tasks` (breaking change) e todo endpoint de listagem novo de `groups-rbac`. Padrão único: `PaginationParams` (dependency FastAPI: `limit` 1–100, default 50; `offset` ≥0, default 0) + envelope de resposta genérico `Page[T]` (`{"items": [...], "total": N, "limit": L, "offset": O}`). Filtro por campo quando fizer sentido pra entidade — `status` opcional em `GET .../tasks` (único filtro óbvio hoje); projetos/grupos sem filtro extra no MVP.
+- **Reason**: Usuário identificou a lacuna (já registrada como gap conhecido em `../resumo.local.md`) e pediu paginação real, incluindo retrofit do v1, não só documentar como pendência.
+- **Trade-off**: Breaking change no contrato de `GET /projects`/`GET .../tasks` (array vira envelope) — frontend precisa acompanhar na mesma leva (usuário confirmou deploy conjunto, "eu subo tudo junto sem problema"). `groups-rbac` ainda em Execute (Fase 2 em diante) — os endpoints de listagem novos (`GET /groups`, `/members`, `/invites`) nascem já usando este padrão, sem retrabalho.
+- **Scope**: Backend (`app/api/pagination.py` novo, `ProjectRepository`/`TaskRepository`, routers de projects/tasks, e os routers de `groups-rbac` ainda não implementados) + Frontend (hooks de projetos/tarefas).
+- **Date**: 2026-08-02
+- **Status**: active
