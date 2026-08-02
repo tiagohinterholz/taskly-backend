@@ -1,6 +1,8 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.group import GroupRole
 from app.models.task import Task
+from app.repositories.group_repository import GroupRepository
 from app.repositories.project_repository import ProjectRepository
 from app.repositories.user_repository import UserRepository
 
@@ -21,8 +23,8 @@ class TestProjectRepositoryCreate:
         assert project.name == "Personal"
 
 
-class TestProjectRepositoryListForUser:
-    async def test_list_for_user_returns_only_that_users_projects(
+class TestProjectRepositoryListAccessibleForUser:
+    async def test_list_accessible_for_user_returns_only_that_users_projects(
         self, db_session: AsyncSession
     ) -> None:
         user_a = await _make_user(db_session, email="a@example.com")
@@ -31,11 +33,158 @@ class TestProjectRepositoryListForUser:
         project_a = await repo.create(user_id=user_a.id, name="A's project")
         await repo.create(user_id=user_b.id, name="B's project")
 
-        projects_for_a, total = await repo.list_for_user(user_a.id, limit=50, offset=0)
+        projects_for_a, total = await repo.list_accessible_for_user(user_a.id, limit=50, offset=0)
 
         assert [p.id for p in projects_for_a] == [project_a.id]
         assert all(p.user_id == user_a.id for p in projects_for_a)
         assert total == 1
+
+    async def test_list_accessible_for_user_includes_group_accessible_projects(
+        self, db_session: AsyncSession
+    ) -> None:
+        owner = await _make_user(db_session, email="lafu-owner@example.com")
+        member = await _make_user(db_session, email="lafu-member@example.com")
+        project_repo = ProjectRepository(db_session)
+        group_repo = GroupRepository(db_session)
+        group = await group_repo.create(name="Team", owner_user_id=owner.id)
+        await group_repo.add_member(group.id, member.id, GroupRole.MEMBER)
+        own_project = await project_repo.create(user_id=member.id, name="Member's own")
+        shared_project = await project_repo.create(user_id=owner.id, name="Shared")
+        shared_project.group_id = group.id
+        await db_session.flush()
+
+        results, total = await project_repo.list_accessible_for_user(member.id, limit=50, offset=0)
+
+        assert total == 2
+        assert {p.id for p in results} == {own_project.id, shared_project.id}
+
+    async def test_list_accessible_for_user_does_not_duplicate_when_owner_is_also_group_member(
+        self, db_session: AsyncSession
+    ) -> None:
+        owner = await _make_user(db_session, email="lafu-nodup@example.com")
+        project_repo = ProjectRepository(db_session)
+        group_repo = GroupRepository(db_session)
+        group = await group_repo.create(name="Team", owner_user_id=owner.id)
+        project = await project_repo.create(user_id=owner.id, name="Own and linked to own group")
+        project.group_id = group.id
+        await db_session.flush()
+
+        results, total = await project_repo.list_accessible_for_user(owner.id, limit=50, offset=0)
+
+        assert total == 1
+        assert [p.id for p in results] == [project.id]
+
+    async def test_list_accessible_for_user_excludes_group_project_for_non_member(
+        self, db_session: AsyncSession
+    ) -> None:
+        owner = await _make_user(db_session, email="lafu-excl-owner@example.com")
+        stranger = await _make_user(db_session, email="lafu-excl-stranger@example.com")
+        project_repo = ProjectRepository(db_session)
+        group_repo = GroupRepository(db_session)
+        group = await group_repo.create(name="Team", owner_user_id=owner.id)
+        shared_project = await project_repo.create(user_id=owner.id, name="Shared")
+        shared_project.group_id = group.id
+        await db_session.flush()
+
+        results, total = await project_repo.list_accessible_for_user(
+            stranger.id, limit=50, offset=0
+        )
+
+        assert results == []
+        assert total == 0
+
+    async def test_list_accessible_for_user_regression_matches_old_strict_behavior_with_no_groups(
+        self, db_session: AsyncSession
+    ) -> None:
+        """AD-018 non-regression: a v1 user who never touches groups gets an
+        identical paginated result (same items, same total, same order)
+        from list_accessible_for_user as the old strict list_for_user did.
+        """
+        user_a = await _make_user(db_session, email="a-regress@example.com")
+        user_b = await _make_user(db_session, email="b-regress@example.com")
+        repo = ProjectRepository(db_session)
+        project_a1 = await repo.create(user_id=user_a.id, name="A1")
+        project_a2 = await repo.create(user_id=user_a.id, name="A2")
+        await repo.create(user_id=user_b.id, name="B1")
+
+        results, total = await repo.list_accessible_for_user(user_a.id, limit=50, offset=0)
+
+        assert total == 2
+        assert [p.id for p in results] == [project_a1.id, project_a2.id]
+        assert all(p.user_id == user_a.id for p in results)
+
+    async def test_list_accessible_for_user_paginates_with_total_reflecting_full_count(
+        self, db_session: AsyncSession
+    ) -> None:
+        user = await _make_user(db_session, email="lafu-page@example.com")
+        repo = ProjectRepository(db_session)
+        for i in range(3):
+            await repo.create(user_id=user.id, name=f"P{i}")
+
+        page, total = await repo.list_accessible_for_user(user.id, limit=2, offset=0)
+
+        assert total == 3
+        assert len(page) == 2
+
+
+class TestProjectRepositoryGetAccessibleForUser:
+    async def test_get_accessible_for_user_returns_project_for_direct_owner(
+        self, db_session: AsyncSession
+    ) -> None:
+        user = await _make_user(db_session, email="gafu-owner@example.com")
+        repo = ProjectRepository(db_session)
+        project = await repo.create(user_id=user.id, name="Mine")
+
+        found = await repo.get_accessible_for_user(project.id, user.id)
+
+        assert found is not None
+        assert found.id == project.id
+
+    async def test_get_accessible_for_user_returns_project_for_group_member(
+        self, db_session: AsyncSession
+    ) -> None:
+        owner = await _make_user(db_session, email="gafu-owner2@example.com")
+        member = await _make_user(db_session, email="gafu-member2@example.com")
+        project_repo = ProjectRepository(db_session)
+        group_repo = GroupRepository(db_session)
+        group = await group_repo.create(name="Team", owner_user_id=owner.id)
+        await group_repo.add_member(group.id, member.id, GroupRole.MEMBER)
+        project = await project_repo.create(user_id=owner.id, name="Shared")
+        project.group_id = group.id
+        await db_session.flush()
+
+        found = await project_repo.get_accessible_for_user(project.id, member.id)
+
+        assert found is not None
+        assert found.id == project.id
+
+    async def test_get_accessible_for_user_returns_none_for_neither_owner_nor_group_member(
+        self, db_session: AsyncSession
+    ) -> None:
+        owner = await _make_user(db_session, email="gafu-owner3@example.com")
+        stranger = await _make_user(db_session, email="gafu-stranger3@example.com")
+        repo = ProjectRepository(db_session)
+        project = await repo.create(user_id=owner.id, name="Private")
+
+        found = await repo.get_accessible_for_user(project.id, stranger.id)
+
+        assert found is None
+
+    async def test_get_accessible_for_user_returns_none_for_group_project_when_not_a_member(
+        self, db_session: AsyncSession
+    ) -> None:
+        owner = await _make_user(db_session, email="gafu-owner4@example.com")
+        stranger = await _make_user(db_session, email="gafu-stranger4@example.com")
+        project_repo = ProjectRepository(db_session)
+        group_repo = GroupRepository(db_session)
+        group = await group_repo.create(name="Team", owner_user_id=owner.id)
+        project = await project_repo.create(user_id=owner.id, name="Shared")
+        project.group_id = group.id
+        await db_session.flush()
+
+        found = await project_repo.get_accessible_for_user(project.id, stranger.id)
+
+        assert found is None
 
 
 class TestProjectRepositoryGetForUser:
@@ -83,7 +232,7 @@ class TestProjectRepositoryDelete:
 
         await repo.delete(project.id)
 
-        remaining, total = await repo.list_for_user(user.id, limit=50, offset=0)
+        remaining, total = await repo.list_accessible_for_user(user.id, limit=50, offset=0)
         assert remaining == []
         assert total == 0
 
