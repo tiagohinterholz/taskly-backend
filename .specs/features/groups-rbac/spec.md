@@ -124,7 +124,7 @@ feliz de colaboração (P1).
 2. WHEN um Membro envia `POST /groups/{group_id}/leave` THEN o sistema SHALL remover sua própria membership e retornar 200.
 3. WHEN o Owner envia `POST /groups/{group_id}/leave` (ou tenta se auto-remover) sem antes transferir a posse THEN o sistema SHALL retornar 409 (nunca pode existir grupo sem owner).
 4. WHEN o Owner envia `POST /groups/{group_id}/transfer-ownership` apontando outro membro existente THEN o sistema SHALL promover esse membro a Owner e rebaixar o Owner anterior a Membro, atomicamente.
-5. WHEN o Owner envia `DELETE /groups/{group_id}/invites/{invite_id}` para um convite ainda pendente THEN o sistema SHALL invalidar o token imediatamente (uso subsequente retorna 410).
+5. WHEN o Owner envia `DELETE /groups/{group_id}/invites/{invite_id}` para um convite ainda pendente THEN o sistema SHALL invalidar o token imediatamente (uso subsequente retorna 404 — mesmo tratamento já dado a um token inexistente, pra não vazar se o token era válido e foi revogado ou nunca existiu; consistente com o padrão de ocultação de existência do AD-012 usado no resto da feature).
 6. WHEN o Owner envia `POST /groups/{group_id}/projects/{project_id}/unlink` THEN o sistema SHALL zerar `Project.group_id`, revertendo o acesso pro dono original apenas (`user_id`).
 7. WHEN o Owner tenta `DELETE /groups/{group_id}` enquanto ainda existe ao menos um projeto com `group_id` apontando pra esse grupo THEN o sistema SHALL retornar 409 sem excluir nada.
 8. WHEN o Owner tenta `DELETE /groups/{group_id}` sem nenhum projeto vinculado THEN o sistema SHALL excluir o grupo e suas memberships/convites pendentes em cascata, retornando 204.
