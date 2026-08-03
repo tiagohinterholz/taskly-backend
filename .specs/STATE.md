@@ -180,11 +180,11 @@
 
 ## Handoff
 
-- **Feature**: `groups-rbac` (backend) — ✅ **VERIFIED (PASS)**, todos os gaps do Verifier fechados, 342 testes; mais 3 extensões pequenas e aditivas pós-Verifier (AD-022) pra habilitar `groups-ui` (frontend) — 345 testes, `pip-audit` limpo. Backend **não commitado pro repo remoto ainda** (usuário decidiu subir tudo junto com o frontend depois).
-- **Phase / Task**: Backend de `groups-rbac` fechado. Trabalho atual é `groups-ui` — feature de frontend (repo separado, `frontend/.specs/features/groups-ui/`) em fase de Design.
-- **Completed**: `groups-rbac` (backend) spec.md/design.md/tasks.md/validation.md completos; `groups-ui` (frontend) spec.md completo e confirmado pelo usuário.
-- **In-progress**: Design de `groups-ui` (frontend) — ver `frontend/.specs/STATE.md` pra decisões específicas do frontend quando existirem.
-- **Next step**: terminar Design → Tasks → Execute de `groups-ui` no repo do frontend.
+- **Feature**: `groups-rbac` (backend) — ✅ **VERIFIED (PASS)**, todos os gaps do Verifier fechados, 345 testes (incl. AD-022's 3 extensões pós-Verifier pra habilitar `groups-ui`), `pip-audit` limpo. `groups-ui` (frontend, repo separado) — ✅ **VERIFIED (PASS)** também, ver `frontend/.specs/STATE.md`. Backend **ainda não commitado pro repo remoto** (usuário decidiu subir tudo junto com o frontend numa leva só, já que a avaliação do case nem olhou a v1 ainda).
+- **Phase / Task**: Ambas as features (`groups-rbac` backend + `groups-ui` frontend) encerradas e verificadas. Usuário testou manualmente em ambiente local (Docker + `npm run dev`) e confirmou o fluxo de criar grupo/projeto funcionando.
+- **Completed**: `groups-rbac` spec.md/design.md/tasks.md/validation.md; `groups-ui` (frontend) spec.md/design.md/tasks.md/validation.md — ambos PASS.
+- **In-progress**: nenhuma.
+- **Next step**: usuário vai, numa sessão futura, migrar pra "uma versão funcional de tudo com serviços de integração" (escopo ainda não especificado). Antes disso, decidir quando fazer o push conjunto backend+frontend pro remoto e redeploy na EC2 (nenhum dos dois foi pra produção ainda com esse código).
 - **Blockers**: none.
 - **Uncommitted files**: none (working tree limpo, tudo commitado localmente).
 - **Branch**: master.
