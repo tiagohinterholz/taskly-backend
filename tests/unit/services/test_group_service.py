@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, call
+from unittest.mock import AsyncMock, call, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -393,6 +393,33 @@ class TestAcceptInvite:
 
         group_repository.add_member.assert_not_awaited()
         session.commit.assert_not_awaited()
+
+    async def test_accept_invite_at_exact_expiry_instant_is_still_valid(self) -> None:
+        # Pins down the `invite.expires_at < now` boundary at the exact tick:
+        # the comparison is strict `<`, so `now == expires_at` does NOT raise
+        # InviteExpiredError — the invite is still accepted (expiry is
+        # exclusive: only strictly-past-expiry instants are rejected). The
+        # service calls `datetime.now(timezone.utc)` directly (not
+        # injectable), so we freeze it via patching the module's `datetime`
+        # name to guarantee `now` is byte-identical to `expires_at`.
+        service, group_repository, group_invite_repository, _, session = _make_service()
+        group_id = uuid.uuid4()
+        acting_user_id = uuid.uuid4()
+        boundary = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        invite = _make_invite(group_id, expires_at=boundary)
+        group_invite_repository.get_by_hash.return_value = invite
+        group_repository.get_membership.return_value = None
+        group_repository.get_by_id.return_value = _make_group("Team")
+
+        with patch("app.services.group_service.datetime") as mock_datetime:
+            mock_datetime.now.return_value = boundary
+            result = await service.accept_invite(acting_user_id, "plain-token")
+
+        assert result is group_repository.get_by_id.return_value
+        group_repository.add_member.assert_awaited_once_with(
+            group_id, acting_user_id, GroupRole.MEMBER
+        )
+        session.commit.assert_awaited_once()
 
     async def test_accept_invite_unknown_token_raises_invite_not_found_error(self) -> None:
         service, group_repository, group_invite_repository, _, session = _make_service()
