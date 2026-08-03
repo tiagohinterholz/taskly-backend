@@ -172,6 +172,34 @@ class TestDeleteGroup:
         listing = await client.get("/groups")
         assert listing.json()["items"] == []
 
+    async def test_invite_generated_then_group_deleted_makes_accept_return_404(
+        self, client: AsyncClient
+    ) -> None:
+        """Edge case from spec.md: an invite generated for a group with no
+        linked projects (so delete is allowed) outlives the group only as
+        an orphaned row -- accepting it afterward must 404, same as any
+        other unknown/invalid token. Structurally this relies on the
+        `ondelete="CASCADE"` FK from group_invites to groups (design.md's
+        data model); this test proves the cascade actually fires, rather
+        than assuming the migration got it right.
+        """
+        await register_and_login(client, _unique_email("grp-delete-orphan-invite"))
+        created = await client.post("/groups", json={"name": "Soon to be deleted"})
+        group_id = created.json()["id"]
+
+        invite_response = await client.post(f"/groups/{group_id}/invites")
+        assert invite_response.status_code == 201, invite_response.text
+        token = invite_response.json()["token"]
+
+        delete_response = await client.delete(f"/groups/{group_id}")
+        assert delete_response.status_code == 204, delete_response.text
+        await client.post("/auth/logout")
+
+        await register_and_login(client, _unique_email("grp-delete-orphan-invite-acceptor"))
+        accept_response = await client.post(f"/invites/{token}/accept")
+
+        assert accept_response.status_code == 404
+
     async def test_delete_group_with_linked_project_returns_409(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
