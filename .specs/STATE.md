@@ -140,16 +140,15 @@
 
 ## Handoff
 
-- **Feature**: `backend/.specs/features/taskly-api` — ✅ **VERIFIED (PASS)**; deploy real em produção (EC2 + Nginx + S3, sem domínio) funcionando, CI/CD testado de ponta a ponta
-- **Phase / Task**: Todas as fases de Execute/Verify concluídas; deploy manual + automatizado (GitHub Actions) validados; `GET /auth/me` adicionado pós-deploy (commit `818a38b`); incidente de senha do Postgres diagnosticado e corrigido (`AD-017`, commit `7afddbe`)
-- **Completed**: spec.md, design.md, tasks.md, validation.md; 201 testes passando; deploy real em `http://<IP-da-EC2>` (backend + frontend na mesma origem via Nginx, sem domínio, `COOKIE_SECURE=false` deliberado)
-- **In-progress**: nenhuma — aguardando o usuário aplicar a recuperação na EC2 (resetar a senha real do Postgres pra um valor conhecido + preencher `POSTGRES_PASSWORD` no `.env` da EC2 + redeploy) depois do incidente do AD-017
-- **Next step**: Confirmar que a recuperação na EC2 funcionou (dados de projetos/tarefas voltam a aparecer, login/logout voltam a funcionar). Considerar fechar os gaps Minor abaixo se sobrar tempo.
-- **Blockers**: none (o fix já está commitado; só falta o usuário aplicar a recuperação pontual na instância)
-- **Uncommitted files**: nenhum
+- **Feature**: `groups-rbac` — all 16 tasks (T1–T16) implemented and committed; Execute complete
+- **Phase / Task**: Phase 5 (Integration & wiring), T16 — final task of the feature, done. `groups_router` registered on `app.main.app`; `tasks.py`'s `_get_owned_project_id` renamed `_get_accessible_project_id` and switched to `ProjectRepository.get_accessible_for_user` (AD-018), with `attachments.py`'s import/call sites updated to match
+- **Completed**: spec.md, design.md, tasks.md for `groups-rbac`; full 335-test suite passing (v1 `taskly-api` baseline 201 + all groups-rbac tests from T1–T16, including the new P1 AC10/AC11 proof test); build gate green (`alembic upgrade head`, `pytest -q`, `pip-audit`, all clean)
+- **In-progress**: none
+- **Next step**: dispatch the Verifier for feature-level validation of `groups-rbac` (spec-anchored coverage check + discrimination sensor), per the `tlc-spec-driven` skill's Execute step 10 — not yet run for this feature
+- **Blockers**: none
+- **Uncommitted files**: none
 - **Branch**: master
-- **Gaps Minor não bloqueantes ainda abertos**: (1) boundary de nome de projeto (1-100 chars) sem teste explícito — lição L-006; (2) cenário "project_id do atacante na URL + task_id de outro projeto" só coberto em teste de repository, não em teste e2e do router — lição L-007.
-- **Notas de ambiente**: Postgres de dev local em `localhost:5433`. `bcrypt==4.0.1` fixado. `python-multipart==0.0.31`. N+1 de anexos resolvido via `AttachmentRepository.list_for_tasks` (batch). `Dockerfile` multi-stage + `entrypoint.sh` (migração automática) prontos. Rotas de task/anexo 100% aninhadas sob `/projects/{id}/tasks/{id}[/attachments/...]` (AD-013). Deploy real: EC2 única rodando backend (Docker) + Postgres (container) + Nginx servindo o frontend estático e fazendo proxy de `/api/*` — sem domínio, sem HTTPS, `COOKIE_SECURE=false` deliberado (ver `../.local.md`).
+- **Notas de ambiente**: `groups-rbac` é puramente aditivo sobre o v1 (AD-018) — `ProjectRepository.get_for_user`/`get_accessible_for_user` coexistem, o primeiro estrito (rename/delete), o segundo ampliado por grupo (leitura/tarefas/anexos). Core proof test: `tests/integration/api/test_tasks_router.py::TestGroupMemberTaskAccess` (member full CRUD + non-member 404, both via the real `/projects/{id}/tasks...` endpoints). Wiring smoke check: `tests/integration/api/test_app_wiring.py::TestHealthAndDocs::test_openapi_json_lists_groups_router_routes`. Postgres de dev local em `localhost:5433`.
 
 ### AD-018
 - **Decision**: Autorização de projeto ampliada via grupo (`groups-rbac`) é **aditiva**: `ProjectRepository.get_for_user`/`list_for_user` (estritos, só `user_id`) continuam existindo intactos e são os únicos usados por `ProjectService.rename`/`delete`. Dois métodos novos — `get_accessible_for_user`/`list_accessible_for_user` (`user_id == dono` OU membro do `group_id` do projeto) — cobrem leitura/listagem/tarefas/anexos, plugados num único ponto de extensão (`_get_owned_project_id` em `tasks.py`, renomeado `_get_accessible_project_id`, já reaproveitado por `attachments.py`).
