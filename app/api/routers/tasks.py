@@ -117,15 +117,16 @@ def _get_task_service(
     )
 
 
-async def _get_owned_project_id(
+async def _get_accessible_project_id(
     project_id: uuid.UUID, user_id: uuid.UUID, session: AsyncSession
 ) -> uuid.UUID:
     """Every task/attachment route is nested under /projects/{project_id}/...,
     so project_id is always available straight from the URL. This verifies
-    it belongs to the current user (404 otherwise, ISO-02) once per request,
-    before any task-level work happens.
+    the current user can access it -- direct owner OR member of the group
+    it's linked to (AD-018) -- once per request, before any task-level work
+    happens. 404 otherwise (ISO-02, unchanged for non-accessible projects).
     """
-    project = await ProjectRepository(session).get_for_user(project_id, user_id)
+    project = await ProjectRepository(session).get_accessible_for_user(project_id, user_id)
     if project is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="project not found")
     return project.id
@@ -141,7 +142,7 @@ async def create_task(
     session: AsyncSession = Depends(get_db_session),
     task_service: TaskService = Depends(_get_task_service),
 ) -> TaskOut:
-    await _get_owned_project_id(project_id, user.id, session)
+    await _get_accessible_project_id(project_id, user.id, session)
     try:
         task = await task_service.create(
             project_id,
@@ -171,7 +172,7 @@ async def list_tasks(
     session: AsyncSession = Depends(get_db_session),
     task_service: TaskService = Depends(_get_task_service),
 ) -> Page[TaskOut]:
-    await _get_owned_project_id(project_id, user.id, session)
+    await _get_accessible_project_id(project_id, user.id, session)
     tasks, total = await task_service.list_for_project(
         project_id, pagination.limit, pagination.offset, status=status_filter
     )
@@ -196,7 +197,7 @@ async def update_task(
     session: AsyncSession = Depends(get_db_session),
     task_service: TaskService = Depends(_get_task_service),
 ) -> TaskOut:
-    await _get_owned_project_id(project_id, user.id, session)
+    await _get_accessible_project_id(project_id, user.id, session)
     fields = payload.model_dump(exclude_unset=True)
     try:
         task = await task_service.update(project_id, task_id, **fields)
@@ -224,7 +225,7 @@ async def delete_task(
     session: AsyncSession = Depends(get_db_session),
     task_service: TaskService = Depends(_get_task_service),
 ) -> None:
-    await _get_owned_project_id(project_id, user.id, session)
+    await _get_accessible_project_id(project_id, user.id, session)
     try:
         await task_service.delete(project_id, task_id)
     except TaskNotFoundError as exc:

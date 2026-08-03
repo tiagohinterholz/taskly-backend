@@ -34,6 +34,32 @@ async def _create_project(client: AsyncClient, name: str = "Project") -> str:
     return response.json()["id"]
 
 
+async def _create_group_owned_project_and_invite(client: AsyncClient) -> tuple[str, str]:
+    """Owner A creates a group, creates + links a project to it, and
+    generates a pending invite. Leaves the client logged out (matching the
+    register/logout/register pattern used throughout this file) so the
+    caller can log in as whoever should accept the invite next.
+
+    Returns (project_id, invite_token).
+    """
+    await register_and_login(client, _unique_email("grp-task-owner"))
+    group_response = await client.post("/groups", json={"name": "Task Access Team"})
+    assert group_response.status_code == 201, group_response.text
+    group_id = group_response.json()["id"]
+
+    project_id = await _create_project(client, "Group-linked project")
+
+    link_response = await client.post(f"/groups/{group_id}/projects/{project_id}/link")
+    assert link_response.status_code == 200, link_response.text
+
+    invite_response = await client.post(f"/groups/{group_id}/invites")
+    assert invite_response.status_code == 201, invite_response.text
+    token = invite_response.json()["token"]
+
+    await client.post("/auth/logout")
+    return project_id, token
+
+
 class TestCreateTask:
     async def test_create_task_with_title_only_returns_201(self, client: AsyncClient) -> None:
         await register_and_login(client, _unique_email("task-create"))
@@ -462,3 +488,82 @@ class TestNoNPlusOneOnListing:
         assert response.status_code == 200
         assert len(response.json()["items"]) == 5
         assert call_count == 1
+
+
+class TestGroupMemberTaskAccess:
+    """T16 / spec P1 AC10-AC11 (GRP-05): the actual payoff of groups-rbac --
+    a Member of a group can fully CRUD tasks on a project linked to that
+    group, exactly like the original owner could, via `_get_accessible_project_id`
+    (AD-018). A non-member gets the exact same 404 a v1 outsider always got --
+    proving the group extension is additive, never a broadening of who can
+    reach an unrelated project's tasks.
+    """
+
+    async def test_group_member_can_fully_crud_tasks_on_linked_project(
+        self, client: AsyncClient
+    ) -> None:
+        project_id, token = await _create_group_owned_project_and_invite(client)
+
+        await register_and_login(client, _unique_email("grp-task-member"))
+        accept_response = await client.post(f"/invites/{token}/accept")
+        assert accept_response.status_code == 200, accept_response.text
+
+        create_response = await client.post(
+            f"/projects/{project_id}/tasks", json={"title": "Member-created task"}
+        )
+        assert create_response.status_code == 201, create_response.text
+        task_id = create_response.json()["id"]
+        assert create_response.json()["project_id"] == project_id
+
+        list_response = await client.get(f"/projects/{project_id}/tasks")
+        assert list_response.status_code == 200
+        assert list_response.json()["total"] == 1
+        assert [t["id"] for t in list_response.json()["items"]] == [task_id]
+
+        update_response = await client.patch(
+            f"/projects/{project_id}/tasks/{task_id}", json={"title": "Updated by member"}
+        )
+        assert update_response.status_code == 200
+        assert update_response.json()["title"] == "Updated by member"
+
+        delete_response = await client.delete(f"/projects/{project_id}/tasks/{task_id}")
+        assert delete_response.status_code == 204
+
+        post_delete_listing = await client.get(f"/projects/{project_id}/tasks")
+        assert post_delete_listing.json()["items"] == []
+
+    async def test_non_member_still_gets_404_on_group_linked_project_tasks(
+        self, client: AsyncClient
+    ) -> None:
+        project_id, token = await _create_group_owned_project_and_invite(client)
+        # Consume the invite as a legitimate member first, so the project has
+        # real group-based traffic -- the outsider below is a genuinely
+        # different, uninvited third party (spec's user C), not merely an
+        # empty group.
+        await register_and_login(client, _unique_email("grp-task-member-b"))
+        accept_response = await client.post(f"/invites/{token}/accept")
+        assert accept_response.status_code == 200, accept_response.text
+        seed_task = await client.post(
+            f"/projects/{project_id}/tasks", json={"title": "Seed task"}
+        )
+        assert seed_task.status_code == 201, seed_task.text
+        task_id = seed_task.json()["id"]
+        await client.post("/auth/logout")
+
+        await register_and_login(client, _unique_email("grp-task-outsider-c"))
+
+        create_response = await client.post(
+            f"/projects/{project_id}/tasks", json={"title": "Sneaky create"}
+        )
+        assert create_response.status_code == 404
+
+        list_response = await client.get(f"/projects/{project_id}/tasks")
+        assert list_response.status_code == 404
+
+        update_response = await client.patch(
+            f"/projects/{project_id}/tasks/{task_id}", json={"title": "Sneaky update"}
+        )
+        assert update_response.status_code == 404
+
+        delete_response = await client.delete(f"/projects/{project_id}/tasks/{task_id}")
+        assert delete_response.status_code == 404

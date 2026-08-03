@@ -51,6 +51,20 @@ class TestHealthAndDocs:
 
         assert response.status_code == 200
 
+    async def test_openapi_json_lists_groups_router_routes(
+        self, wired_client: AsyncClient
+    ) -> None:
+        """T16: `groups_router` must be registered on the real `app.main.app`,
+        not just on the test-only app built by conftest.py's `_build_app`.
+        """
+        response = await wired_client.get("/openapi.json")
+
+        assert response.status_code == 200
+        paths = response.json()["paths"]
+        assert "/groups" in paths
+        assert "/groups/{group_id}/projects/{project_id}/link" in paths
+        assert "/invites/{token}/accept" in paths
+
 
 class TestCORS:
     async def test_configured_frontend_origin_is_allowed(self, wired_client: AsyncClient) -> None:

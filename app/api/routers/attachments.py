@@ -5,7 +5,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_user, get_db_session
-from app.api.routers.tasks import AttachmentOut, _get_owned_project_id, _to_attachment_out
+from app.api.routers.tasks import AttachmentOut, _get_accessible_project_id, _to_attachment_out
 from app.models.user import User
 from app.repositories.attachment_repository import AttachmentRepository
 from app.repositories.task_repository import TaskRepository
@@ -46,7 +46,7 @@ async def upload_attachment(
     session: AsyncSession = Depends(get_db_session),
     attachment_service: AttachmentService = Depends(_get_attachment_service),
 ) -> AttachmentOut:
-    await _get_owned_project_id(project_id, user.id, session)
+    await _get_accessible_project_id(project_id, user.id, session)
     content = await file.read()
     try:
         attachment = await attachment_service.upload(
@@ -82,7 +82,7 @@ async def delete_attachment(
     session: AsyncSession = Depends(get_db_session),
     attachment_service: AttachmentService = Depends(_get_attachment_service),
 ) -> None:
-    await _get_owned_project_id(project_id, user.id, session)
+    await _get_accessible_project_id(project_id, user.id, session)
     try:
         await attachment_service.delete(project_id, task_id, attachment_id)
     except TaskNotFoundError as exc:
@@ -112,7 +112,7 @@ async def download_attachment(
     any mismatch, same rigor as every other nested task/attachment route —
     never reveals which level failed.
     """
-    await _get_owned_project_id(project_id, user.id, session)
+    await _get_accessible_project_id(project_id, user.id, session)
     task = await TaskRepository(session).get_for_project(task_id, project_id)
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="task not found")
