@@ -4,7 +4,35 @@ from datetime import timedelta
 import jwt
 import pytest
 
-from app.core.security import JWTService, PasswordHasher
+from app.core.security import JWTService, PasswordHasher, generate_opaque_token, hash_token
+
+
+class TestOpaqueToken:
+    def test_hash_token_is_deterministic(self) -> None:
+        token = "some-opaque-token-value"
+
+        assert hash_token(token) == hash_token(token)
+
+    def test_hash_token_is_not_the_identity_function(self) -> None:
+        token = "some-opaque-token-value"
+
+        assert hash_token(token) != token
+
+    def test_generate_opaque_token_returns_non_empty_url_safe_string(self) -> None:
+        token = generate_opaque_token()
+
+        assert isinstance(token, str)
+        assert len(token) > 0
+        allowed = set(
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        )
+        assert set(token) <= allowed
+
+    def test_generate_opaque_token_calls_produce_different_values(self) -> None:
+        first = generate_opaque_token()
+        second = generate_opaque_token()
+
+        assert first != second
 
 
 class TestPasswordHasher:
