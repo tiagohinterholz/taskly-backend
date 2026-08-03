@@ -3,7 +3,7 @@
   "promote_threshold": 2,
   "window_days": 45,
   "quarantine_threshold": 2,
-  "next_id": 9,
+  "next_id": 11,
   "lessons": [
     {
       "id": "L-001",
@@ -148,6 +148,42 @@
       ],
       "created": "2026-07-24T17:59:12Z",
       "last_seen": "2026-07-24T17:59:12Z"
+    },
+    {
+      "id": "L-009",
+      "key": "spec_deviation::when design md intentionally overrides a spec md ac for a security consistency reason e g 404 instead of 410 to avoid leaking revoked vs unknown update spec md in the same phase otherwise a later verifier can t tell intentional divergence from a bug",
+      "text": "When design.md intentionally overrides a spec.md AC for a security-consistency reason (e.g. 404 instead of 410 to avoid leaking revoked-vs-unknown), update spec.md in the same phase — otherwise a later Verifier can't tell intentional divergence from a bug.",
+      "signal": "spec_deviation",
+      "scope": "backend",
+      "status": "candidate",
+      "features": [
+        "groups-rbac"
+      ],
+      "recurrence": 1,
+      "harmful": 0,
+      "evidence": [
+        "spec.md P2 AC5 (backend)"
+      ],
+      "created": "2026-08-03T01:34:01Z",
+      "last_seen": "2026-08-03T01:34:01Z"
+    },
+    {
+      "id": "L-010",
+      "key": "surviving_mutant::for time count boundary comparisons add a discrimination sensor mutation at the exact boundary value not just clearly before clearly after that is where spec driven test suites tend to have blind spots",
+      "text": "For time/count boundary comparisons, add a discrimination-sensor mutation at the exact boundary value, not just clearly-before/clearly-after — that is where spec-driven test suites tend to have blind spots.",
+      "signal": "surviving_mutant",
+      "scope": "backend",
+      "status": "candidate",
+      "features": [
+        "groups-rbac"
+      ],
+      "recurrence": 1,
+      "harmful": 0,
+      "evidence": [
+        "app/services/group_service.py accept_invite expiry check (backend)"
+      ],
+      "created": "2026-08-03T01:34:01Z",
+      "last_seen": "2026-08-03T01:34:01Z"
     }
   ]
 }
