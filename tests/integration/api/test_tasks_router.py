@@ -9,7 +9,7 @@ import app.repositories.attachment_repository as attachment_repository_module
 from app.models.task import TaskStatus
 from app.storage.backend import StorageError, get_storage_backend
 from app.storage.local import LocalStorageBackend
-from tests.integration.api.conftest import register_and_login
+from tests.integration.api.conftest import DEFAULT_PASSWORD, register_and_login
 
 
 class _FailingStorageBackend:
@@ -32,6 +32,34 @@ async def _create_project(client: AsyncClient, name: str = "Project") -> str:
     response = await client.post("/projects", json={"name": name})
     assert response.status_code == 201, response.text
     return response.json()["id"]
+
+
+async def _register_and_get_id(client: AsyncClient, email: str) -> str:
+    """Registers + logs in a user, returning their id (register_and_login
+    doesn't expose it, but the /auth/register response body does). Mirrors
+    the identically-named helper in test_groups_router.py.
+    """
+    register_response = await client.post(
+        "/auth/register", json={"email": email, "password": DEFAULT_PASSWORD}
+    )
+    assert register_response.status_code == 201, register_response.text
+    user_id = register_response.json()["id"]
+    login_response = await client.post(
+        "/auth/login", json={"email": email, "password": DEFAULT_PASSWORD}
+    )
+    assert login_response.status_code == 200, login_response.text
+    return user_id
+
+
+async def _login(client: AsyncClient, email: str) -> None:
+    """Re-authenticates as an already-registered user (register_and_login
+    always registers first, so it can't be reused to switch back to a user
+    registered earlier in the same test).
+    """
+    login_response = await client.post(
+        "/auth/login", json={"email": email, "password": DEFAULT_PASSWORD}
+    )
+    assert login_response.status_code == 200, login_response.text
 
 
 async def _create_group_owned_project_and_invite(client: AsyncClient) -> tuple[str, str]:
@@ -567,3 +595,55 @@ class TestGroupMemberTaskAccess:
 
         delete_response = await client.delete(f"/projects/{project_id}/tasks/{task_id}")
         assert delete_response.status_code == 404
+
+    async def test_removed_member_loses_task_access_immediately_but_created_tasks_remain(
+        self, client: AsyncClient
+    ) -> None:
+        """P2 AC1 (GRP-07): removing a member revokes their task access
+        immediately (no caching/staleness -- proven by an actual removed-
+        member request, not just a shrinking /members count) while the
+        tasks they created stay in the project for the owner.
+        """
+        owner_email = _unique_email("grp-remove-task-owner")
+        await register_and_login(client, owner_email)
+        group_response = await client.post("/groups", json={"name": "Removal Task Access Team"})
+        assert group_response.status_code == 201, group_response.text
+        group_id = group_response.json()["id"]
+
+        project_id = await _create_project(client, "Group-linked project")
+        link_response = await client.post(f"/groups/{group_id}/projects/{project_id}/link")
+        assert link_response.status_code == 200, link_response.text
+
+        invite_response = await client.post(f"/groups/{group_id}/invites")
+        assert invite_response.status_code == 201, invite_response.text
+        token = invite_response.json()["token"]
+        await client.post("/auth/logout")
+
+        member_email = _unique_email("grp-remove-task-member")
+        member_id = await _register_and_get_id(client, member_email)
+        accept_response = await client.post(f"/invites/{token}/accept")
+        assert accept_response.status_code == 200, accept_response.text
+
+        create_response = await client.post(
+            f"/projects/{project_id}/tasks",
+            json={"title": "Task created by soon-to-be-removed member"},
+        )
+        assert create_response.status_code == 201, create_response.text
+        task_id = create_response.json()["id"]
+        await client.post("/auth/logout")
+
+        await _login(client, owner_email)
+        remove_response = await client.delete(f"/groups/{group_id}/members/{member_id}")
+        assert remove_response.status_code == 204, remove_response.text
+
+        # (4) Owner still sees the task the removed member created -- data
+        # isn't deleted, only the removed member's access changes.
+        owner_listing = await client.get(f"/projects/{project_id}/tasks")
+        assert owner_listing.status_code == 200
+        assert [t["id"] for t in owner_listing.json()["items"]] == [task_id]
+        await client.post("/auth/logout")
+
+        # (3) The removed member's subsequent request is denied immediately.
+        await _login(client, member_email)
+        member_listing = await client.get(f"/projects/{project_id}/tasks")
+        assert member_listing.status_code == 404
