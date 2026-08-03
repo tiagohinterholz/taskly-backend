@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +28,7 @@ class ProjectOut(BaseModel):
 
     id: uuid.UUID
     name: str
+    group_id: uuid.UUID | None
     created_at: datetime
     updated_at: datetime
 
@@ -47,12 +48,13 @@ async def create_project(
 
 @router.get("", response_model=Page[ProjectOut])
 async def list_projects(
+    group_id: uuid.UUID | None = Query(default=None),
     pagination: PaginationParams = Depends(),
     user: User = Depends(get_current_user),
     project_service: ProjectService = Depends(_get_project_service),
 ) -> Page[ProjectOut]:
     projects, total = await project_service.list_for_user(
-        user.id, pagination.limit, pagination.offset
+        user.id, pagination.limit, pagination.offset, group_id=group_id
     )
     return Page[ProjectOut](
         items=projects, total=total, limit=pagination.limit, offset=pagination.offset

@@ -243,10 +243,12 @@ class TestListGroupMembers:
     async def test_list_members_returns_role_and_joined_at(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
-        owner_id = await _register_and_get_id(client, _unique_email("grp-members-owner"))
+        owner_email = _unique_email("grp-members-owner")
+        member_email = _unique_email("grp-members-b")
+        owner_id = await _register_and_get_id(client, owner_email)
         created = await client.post("/groups", json={"name": "Team"})
         group_id = uuid.UUID(created.json()["id"])
-        member_id = await _register_and_get_id(client, _unique_email("grp-members-b"))
+        member_id = await _register_and_get_id(client, member_email)
         await GroupRepository(db_session).add_member(group_id, member_id, GroupRole.MEMBER)
         await db_session.commit()
 
@@ -256,8 +258,11 @@ class TestListGroupMembers:
         body = response.json()
         assert body["total"] == 2
         roles_by_user = {item["user_id"]: item["role"] for item in body["items"]}
+        emails_by_user = {item["user_id"]: item["email"] for item in body["items"]}
         assert roles_by_user[str(owner_id)] == "owner"
         assert roles_by_user[str(member_id)] == "member"
+        assert emails_by_user[str(owner_id)] == owner_email
+        assert emails_by_user[str(member_id)] == member_email
         assert all("created_at" in item for item in body["items"])
 
     async def test_list_members_readable_by_non_owner_member(

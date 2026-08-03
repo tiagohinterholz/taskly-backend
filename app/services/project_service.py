@@ -33,9 +33,11 @@ class ProjectService:
         return project
 
     async def list_for_user(
-        self, user_id: uuid.UUID, limit: int, offset: int
+        self, user_id: uuid.UUID, limit: int, offset: int, group_id: uuid.UUID | None = None
     ) -> tuple[list[Project], int]:
-        return await self._project_repository.list_accessible_for_user(user_id, limit, offset)
+        return await self._project_repository.list_accessible_for_user(
+            user_id, limit, offset, group_id=group_id
+        )
 
     async def rename(self, user_id: uuid.UUID, project_id: uuid.UUID, name: str) -> Project:
         owned = await self._project_repository.get_for_user(project_id, user_id)

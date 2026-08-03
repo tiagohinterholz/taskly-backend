@@ -52,7 +52,9 @@ class TestListForUser:
 
         assert items == user_projects
         assert total == 2
-        project_repository.list_accessible_for_user.assert_awaited_once_with(user_id, 50, 0)
+        project_repository.list_accessible_for_user.assert_awaited_once_with(
+            user_id, 50, 0, group_id=None
+        )
 
     async def test_list_for_user_returns_empty_list_when_user_has_no_projects(self) -> None:
         service, project_repository, _ = _make_service()

@@ -65,9 +65,13 @@ class GroupWithRoleOut(GroupOut):
 
 
 class MemberOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    """Built manually from GroupRepository.list_members's `(GroupMembership,
+    email)` tuples rather than `from_attributes`, same reason as
+    `GroupWithRoleOut` above — a plain tuple has no named attributes.
+    """
 
     user_id: uuid.UUID
+    email: str
     role: str
     created_at: datetime
 
@@ -209,12 +213,16 @@ async def list_group_members(
     group_service: GroupService = Depends(_get_group_service),
 ) -> Page[MemberOut]:
     try:
-        members, total = await group_service.list_members(
+        members_with_email, total = await group_service.list_members(
             user.id, group_id, pagination.limit, pagination.offset
         )
     except GroupNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="group not found") from exc
-    return Page[MemberOut](items=members, total=total, limit=pagination.limit, offset=pagination.offset)
+    items = [
+        MemberOut(user_id=member.user_id, email=email, role=member.role.value, created_at=member.created_at)
+        for member, email in members_with_email
+    ]
+    return Page[MemberOut](items=items, total=total, limit=pagination.limit, offset=pagination.offset)
 
 
 @router.post(

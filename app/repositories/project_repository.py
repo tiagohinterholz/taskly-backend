@@ -39,7 +39,7 @@ class ProjectRepository(BaseRepository[Project]):
         return project
 
     async def list_accessible_for_user(
-        self, user_id: uuid.UUID, limit: int, offset: int
+        self, user_id: uuid.UUID, limit: int, offset: int, group_id: uuid.UUID | None = None
     ) -> tuple[list[Project], int]:
         """Paginated listing (AD-021): returns the requested page alongside
         the total matching count (ignoring `limit`/`offset`), so callers can
@@ -51,8 +51,15 @@ class ProjectRepository(BaseRepository[Project]):
         this reduces to the exact same result set as the old strict
         `list_for_user` (now `get_for_user`'s sibling below) — the
         pagination logic itself is unchanged from before this rename.
+
+        `group_id`, when given, narrows the result to that group's linked
+        projects only — combined with (never instead of) the accessibility
+        condition above, so it can only ever narrow what the caller could
+        already see, never grant access to a group they're not in.
         """
         condition = _accessible_condition(user_id)
+        if group_id is not None:
+            condition = and_(condition, Project.group_id == group_id)
 
         count_result = await self._session.execute(
             select(func.count()).select_from(Project).where(condition)

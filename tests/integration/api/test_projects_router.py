@@ -97,6 +97,49 @@ class TestListProjects:
 
         assert response.status_code == 422
 
+    async def test_project_out_group_id_is_null_for_a_personal_project(
+        self, client: AsyncClient
+    ) -> None:
+        await register_and_login(client, _unique_email("proj-list-group-null"))
+        await client.post("/projects", json={"name": "Personal"})
+
+        response = await client.get("/projects")
+
+        assert response.json()["items"][0]["group_id"] is None
+
+    async def test_project_out_group_id_reflects_the_linked_group_after_linking(
+        self, client: AsyncClient
+    ) -> None:
+        await register_and_login(client, _unique_email("proj-list-group-set"))
+        project = await client.post("/projects", json={"name": "Shared"})
+        project_id = project.json()["id"]
+        group = await client.post("/groups", json={"name": "Team"})
+        group_id = group.json()["id"]
+        link = await client.post(f"/groups/{group_id}/projects/{project_id}/link")
+        assert link.status_code == 200
+
+        response = await client.get("/projects")
+
+        items = response.json()["items"]
+        assert next(p for p in items if p["id"] == project_id)["group_id"] == group_id
+
+    async def test_list_projects_group_id_filter_narrows_to_that_groups_projects(
+        self, client: AsyncClient
+    ) -> None:
+        await register_and_login(client, _unique_email("proj-list-group-filter"))
+        personal = await client.post("/projects", json={"name": "Personal"})
+        shared = await client.post("/projects", json={"name": "Shared"})
+        group = await client.post("/groups", json={"name": "Team"})
+        group_id = group.json()["id"]
+        await client.post(f"/groups/{group_id}/projects/{shared.json()['id']}/link")
+
+        response = await client.get("/projects", params={"group_id": group_id})
+
+        body = response.json()
+        assert body["total"] == 1
+        assert [p["id"] for p in body["items"]] == [shared.json()["id"]]
+        assert personal.json()["id"] not in [p["id"] for p in body["items"]]
+
 
 class TestRenameProject:
     async def test_rename_project_updates_name(self, client: AsyncClient) -> None:

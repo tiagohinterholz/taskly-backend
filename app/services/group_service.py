@@ -137,7 +137,7 @@ class GroupService:
 
     async def list_members(
         self, acting_user_id: uuid.UUID, group_id: uuid.UUID, limit: int, offset: int
-    ) -> tuple[list[GroupMembership], int]:
+    ) -> tuple[list[tuple[GroupMembership, str]], int]:
         membership = await self._group_repository.get_membership(group_id, acting_user_id)
         if membership is None:
             raise GroupNotFoundError(group_id)

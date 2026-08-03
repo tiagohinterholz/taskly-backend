@@ -5,6 +5,7 @@ from sqlalchemy import func, select, update
 
 from app.models.group import Group, GroupMembership, GroupRole
 from app.models.project import Project
+from app.models.user import User
 from app.repositories.base import BaseRepository
 
 
@@ -48,10 +49,12 @@ class GroupRepository(BaseRepository[Group]):
 
     async def list_members(
         self, group_id: uuid.UUID, limit: int, offset: int
-    ) -> tuple[list[GroupMembership], int]:
-        """Paginated listing (AD-021): returns the requested page alongside
-        the total matching count, ordered by `created_at`/`id` for stable
-        page boundaries — same shape as `ProjectRepository.list_for_user`.
+    ) -> tuple[list[tuple[GroupMembership, str]], int]:
+        """Paginated listing (AD-021): returns the requested page (each row
+        paired with that member's email, joined from User — a UUID alone
+        isn't a usable identity for a member-list UI) alongside the total
+        matching count, ordered by `created_at`/`id` for stable page
+        boundaries — same shape as `ProjectRepository.list_for_user`.
         """
         count_result = await self._session.execute(
             select(func.count())
@@ -61,13 +64,14 @@ class GroupRepository(BaseRepository[Group]):
         total = count_result.scalar_one()
 
         result = await self._session.execute(
-            select(GroupMembership)
+            select(GroupMembership, User.email)
+            .join(User, User.id == GroupMembership.user_id)
             .where(GroupMembership.group_id == group_id)
             .order_by(GroupMembership.created_at, GroupMembership.id)
             .limit(limit)
             .offset(offset)
         )
-        return list(result.scalars().all()), total
+        return [(membership, email) for membership, email in result.all()], total
 
     async def list_for_user(
         self, user_id: uuid.UUID, limit: int, offset: int

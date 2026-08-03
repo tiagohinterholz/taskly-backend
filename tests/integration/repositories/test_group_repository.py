@@ -66,7 +66,8 @@ class TestGroupRepositoryListMembers:
         page, total = await repo.list_members(group.id, limit=50, offset=0)
 
         assert total == 2
-        assert {m.user_id for m in page} == {owner.id, member.id}
+        assert {membership.user_id for membership, _email in page} == {owner.id, member.id}
+        assert {email for _membership, email in page} == {owner.email, member.email}
 
     async def test_list_members_paginates_with_total_reflecting_full_count(
         self, db_session: AsyncSession
